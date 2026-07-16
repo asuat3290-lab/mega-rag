@@ -106,6 +106,7 @@ def run_test(query: str, expected_terms_in_snippet: list = None,
         entry = {
             "rank": i + 1,
             "type": r.get('type', r.get('source_type', '?')),
+            "text_layer": r.get('text_layer', 'unclassified'),
             "abt": r.get('abteilung', '?'),
             "band": r.get('band', '?'),
             "page": r.get('page', r.get('page_no', '?')),
@@ -193,6 +194,17 @@ def run_test(query: str, expected_terms_in_snippet: list = None,
             result["failures"].append(
                 f"目标原文页有 {evidence_count} 条证据，但未进入 top10"
             )
+    if expected_page_range and target_evidence_rank is not None:
+        editorial_ranks = [
+            entry["rank"] for entry in result["top10"]
+            if entry.get("text_layer") in {"editorial_intro", "editorial_note", "table_of_contents", "front_matter"}
+        ]
+        if editorial_ranks and min(editorial_ranks) < target_evidence_rank:
+            result["status"] = FAIL_ALG
+            result["failures"].append(
+                f"高置信编者材料排名 #{min(editorial_ranks)} 高于目标原文证据 #{target_evidence_rank}"
+            )
+
     if expected_volume and target_page_rank is None:
         abt, band = expected_volume
         try:
@@ -317,8 +329,8 @@ def main():
             dbg = e.get('debug', {})
             print(f"   [{e['rank']}] {e['type']:6s} {e['abt']}/{str(e['band']):3s} "
                   f"p.{str(e['page']):>4s} score={e['final_score']} "
-                  f"v={dbg.get('volume_boost','-')} t={dbg.get('type_boost','-')} "
-                  f"mt='{mt}'")
+                  f"layer={e.get('text_layer','-')} la={dbg.get('layer_adjustment','-')} "
+                  f"v={dbg.get('volume_boost','-')} t={dbg.get('type_boost','-')} mt='{mt}'")
             print(f"       {e['snippet_preview'][:100]}...")
 
         if r['failures']:

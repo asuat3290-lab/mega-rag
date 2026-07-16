@@ -4,9 +4,12 @@ MEGA² RAG — 跨卷分析层
 当用户问题涉及跨时期变化时，做时间聚合 + 结构化证据链，再交给 Pro 综合。
 """
 import re
+import sqlite3
 from typing import List, Dict, Optional
 from datetime import datetime
 from pathlib import Path
+
+from snippet_extractor import text_layer_label
 
 
 # MEGA 卷册 → 时间映射 (Abteilung/Band → 年份范围)
@@ -111,17 +114,30 @@ def _fts_terms(terms: List[str]) -> List[str]:
     return clean
 
 
+def _layer_select_sql(conn: sqlite3.Connection, alias: str = "c") -> str:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(chunks)")}
+    if "text_layer" not in columns:
+        return "'unclassified', 0, ''"
+    return (
+        f"COALESCE({alias}.text_layer, 'unclassified'), "
+        f"COALESCE({alias}.text_layer_confidence, 0), "
+        f"COALESCE({alias}.text_layer_provenance, '')"
+    )
+
+
 def _retrieve_volume_evidence(conn, abteilung: str, band: str, terms: List[str]) -> list[dict]:
     """Use one scoped FTS query per volume; LIKE is only a narrow fallback."""
     rows = []
+    layer_columns = _layer_select_sql(conn)
     fts_terms = _fts_terms(terms)
     if fts_terms:
         fts_query = " OR ".join(fts_terms[:12])
         try:
             rows = conn.execute(
-                """
+                f"""
                 SELECT c.page, c.source_type, c.is_main_text, c.chunk_text,
-                       COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, '')
+                       COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''),
+                       {layer_columns}
                 FROM chunks_fts f JOIN chunks c ON f.rowid = c.rowid
                 WHERE chunks_fts MATCH ?
                   AND c.mega_abteilung = ? AND c.band = ? AND c.source_type = 'TEXT'
@@ -138,7 +154,8 @@ def _retrieve_volume_evidence(conn, abteilung: str, band: str, terms: List[str])
         rows = conn.execute(
             f"""
             SELECT c.page, c.source_type, c.is_main_text, c.chunk_text,
-                   COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, '')
+                   COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''),
+                   {layer_columns}
             FROM chunks c
             WHERE c.mega_abteilung = ? AND c.band = ? AND c.source_type = 'TEXT'
               AND ({clauses})
@@ -150,7 +167,10 @@ def _retrieve_volume_evidence(conn, abteilung: str, band: str, terms: List[str])
     return [
         {
             "page": row[0],
-            "text_type": "正文" if row[2] else "编者说明",
+            "text_layer": row[6],
+            "text_layer_confidence": row[7],
+            "text_layer_provenance": row[8],
+            "text_type": text_layer_label({"text_layer": row[6]}),
             "text": (row[3] or "")[:320],
             "page_kind": row[4],
             "page_label": row[5],
@@ -216,7 +236,7 @@ def build_temporal_evidence(results: List[Dict], core_terms: List[str] = None,
             "band": band,
             "items": [{
                 "page": result.get("page", "?"),
-                "text_type": "正文" if result.get("is_main_text") else "编者说明",
+                "text_type": text_layer_label(result),
                 "text": (result.get("text") or "")[:320],
                 "page_kind": result.get("page_kind", "pdf"),
                 "page_label": result.get("page_label", ""),

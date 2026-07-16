@@ -93,6 +93,13 @@ def parse_metadata(txt_path: Path):
         "alpha_ratio": q.get('alpha_ratio', 0),
         "german_word_ratio": q.get('german_word_ratio', 0),
         "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "text_layer": "apparatus" if doc_type == "APPARAT" else "textband_unclassified",
+        "text_layer_confidence": 0.99 if doc_type == "APPARAT" else 0.0,
+        "text_layer_provenance": (
+            "text-layer-v1:source_type=APPARAT" if doc_type == "APPARAT"
+            else "text-layer-v1:new_ocr_row_unclassified"
+        ),
+        "text_layer_version": "text-layer-v1",
     }
 
 # ============================================================
@@ -122,6 +129,10 @@ def init_metadata_db():
             alpha_ratio REAL DEFAULT 0,
             german_word_ratio REAL DEFAULT 0,
             content_hash TEXT,
+            text_layer TEXT DEFAULT 'unclassified',
+            text_layer_confidence REAL DEFAULT 0,
+            text_layer_provenance TEXT DEFAULT '',
+            text_layer_version TEXT DEFAULT '',
             indexed_at TEXT
         )
     """)
@@ -195,6 +206,10 @@ def _migrate_schema(conn):
         ("chunks", "alpha_ratio REAL DEFAULT 0"),
         ("chunks", "german_word_ratio REAL DEFAULT 0"),
         ("chunks", "content_hash TEXT"),
+        ("chunks", "text_layer TEXT DEFAULT 'unclassified'"),
+        ("chunks", "text_layer_confidence REAL DEFAULT 0"),
+        ("chunks", "text_layer_provenance TEXT DEFAULT ''"),
+        ("chunks", "text_layer_version TEXT DEFAULT ''"),
         ("index_progress", "status TEXT DEFAULT 'indexed'"),
         ("index_progress", "reason TEXT DEFAULT ''"),
         ("index_progress", "content_hash TEXT DEFAULT ''"),
@@ -335,18 +350,66 @@ def _flush_batch(conn, batch_meta, ollama, emb_model, use_embedding) -> int:
     for meta in batch_meta:
         conn.execute(
             """
-            INSERT OR REPLACE INTO chunks (id, source_path, mega_abteilung, band,
+            INSERT INTO chunks (id, source_path, mega_abteilung, band,
                 source_type, page, is_main_text, is_editorial_comment, language,
                 chunk_text, char_count, source_file, ocr_quality, alpha_ratio,
-                german_word_ratio, content_hash, indexed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                german_word_ratio, content_hash, text_layer, text_layer_confidence,
+                text_layer_provenance, text_layer_version, indexed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                source_path=excluded.source_path,
+                mega_abteilung=excluded.mega_abteilung,
+                band=excluded.band,
+                source_type=excluded.source_type,
+                page=excluded.page,
+                is_main_text=excluded.is_main_text,
+                is_editorial_comment=excluded.is_editorial_comment,
+                language=excluded.language,
+                chunk_text=excluded.chunk_text,
+                char_count=excluded.char_count,
+                source_file=excluded.source_file,
+                ocr_quality=excluded.ocr_quality,
+                alpha_ratio=excluded.alpha_ratio,
+                german_word_ratio=excluded.german_word_ratio,
+                content_hash=excluded.content_hash,
+                text_layer=CASE
+                    WHEN COALESCE(chunks.text_layer_provenance, '') LIKE 'manual:%'
+                        THEN chunks.text_layer
+                    WHEN chunks.source_type <> excluded.source_type
+                        THEN excluded.text_layer
+                    ELSE chunks.text_layer
+                END,
+                text_layer_confidence=CASE
+                    WHEN COALESCE(chunks.text_layer_provenance, '') LIKE 'manual:%'
+                        THEN chunks.text_layer_confidence
+                    WHEN chunks.source_type <> excluded.source_type
+                        THEN excluded.text_layer_confidence
+                    ELSE chunks.text_layer_confidence
+                END,
+                text_layer_provenance=CASE
+                    WHEN COALESCE(chunks.text_layer_provenance, '') LIKE 'manual:%'
+                        THEN chunks.text_layer_provenance
+                    WHEN chunks.source_type <> excluded.source_type
+                        THEN excluded.text_layer_provenance
+                    ELSE chunks.text_layer_provenance
+                END,
+                text_layer_version=CASE
+                    WHEN COALESCE(chunks.text_layer_provenance, '') LIKE 'manual:%'
+                        THEN chunks.text_layer_version
+                    WHEN chunks.source_type <> excluded.source_type
+                        THEN excluded.text_layer_version
+                    ELSE chunks.text_layer_version
+                END,
+                indexed_at=excluded.indexed_at
             """,
             (
                 meta['id'], meta['source_path'], meta['mega_abteilung'], meta['band'],
                 meta['source_type'], meta['page'], meta['is_main_text'], meta['is_editorial_comment'],
                 meta['language'], meta['chunk_text'], meta['char_count'], meta['source_file'],
                 meta.get('ocr_quality', 'medium'), meta.get('alpha_ratio', 0),
-                meta.get('german_word_ratio', 0), meta['content_hash'], now,
+                meta.get('german_word_ratio', 0), meta['content_hash'],
+                meta['text_layer'], meta['text_layer_confidence'],
+                meta['text_layer_provenance'], meta['text_layer_version'], now,
             ),
         )
         conn.execute("""

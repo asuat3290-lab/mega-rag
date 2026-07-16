@@ -22,7 +22,7 @@ from rerank import rerank, MODE_WEIGHTS
 from glossary_loader import expand_with_glossary, load_glossary
 from ocr_quality import assess_quality
 from query_analyzer import analyze_query, build_priority_terms
-from snippet_extractor import extract_best_snippet, build_snippet_for_flash, build_snippet_for_display, format_source_label
+from snippet_extractor import extract_best_snippet, build_snippet_for_flash, build_snippet_for_display, format_source_label, text_layer_label
 from cross_volume_analysis import is_temporal_query, build_temporal_evidence
 
 _GLOSSARY = load_glossary()
@@ -59,11 +59,22 @@ def fts5_query(query: str) -> str:
         return query
     return " OR ".join(words) if words else query
 
+def _layer_select_sql(conn: sqlite3.Connection, alias: str = "c") -> str:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(chunks)")}
+    if "text_layer" not in columns:
+        return "'unclassified', 0, ''"
+    return (
+        f"COALESCE({alias}.text_layer, 'unclassified'), "
+        f"COALESCE({alias}.text_layer_confidence, 0), "
+        f"COALESCE({alias}.text_layer_provenance, '')"
+    )
+
 def do_scoped_search(query_terms: list, target_abt: str, target_band: str = None,
                      text_only: bool = True, top_k: int = 20,
                      source_collection: str = None) -> list:
     """Recall candidates within an explicit MEGA scope, optionally by source."""
     conn = sqlite3.connect(str(META_DB))
+    layer_columns = _layer_select_sql(conn)
     results = []
     seen = set()
 
@@ -89,7 +100,8 @@ def do_scoped_search(query_terms: list, target_abt: str, target_band: str = None
                 SELECT c.id, c.source_path, c.mega_abteilung, c.band, c.source_type,
                        c.page, c.is_main_text, c.chunk_text, c.char_count,
                        COALESCE(c.source_collection, 'ocr'), COALESCE(c.source_quality, 'ocr'),
-                       COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''), COALESCE(c.source_url, '')
+                       COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''), COALESCE(c.source_url, ''),
+                       {layer_columns}
                 FROM chunks c
                 WHERE {where_base} AND c.chunk_text LIKE ?
                 ORDER BY c.char_count DESC LIMIT ?
@@ -105,6 +117,8 @@ def do_scoped_search(query_terms: list, target_abt: str, target_band: str = None
                     "is_main_text": bool(row[6]), "text": row[7],
                     "source_collection": row[9], "source_quality": row[10],
                     "page_kind": row[11], "page_label": row[12], "source_url": row[13],
+                    "text_layer": row[14], "text_layer_confidence": row[15],
+                    "text_layer_provenance": row[16],
                     "rank": 99, "_bm25_rank": 99,
                     "_retrieval_source": source_tag, "_retrieval_sources": [source_tag],
                 })
@@ -122,6 +136,7 @@ def do_search(query: str, route: str = "all", top_k: int = 15, use_passage: bool
     from ollama import Client
 
     conn = sqlite3.connect(str(META_DB))
+    layer_columns = _layer_select_sql(conn)
     fts_q = fts5_query(query)
 
     # 检查 passage 是否可用
@@ -145,7 +160,8 @@ def do_search(query: str, route: str = "all", top_k: int = 15, use_passage: bool
             SELECT c.id, c.source_path, c.mega_abteilung, c.band, c.source_type,
                    c.page, c.is_main_text, c.chunk_text, rank,
                    COALESCE(c.source_collection, 'ocr'), COALESCE(c.source_quality, 'ocr'),
-                   COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''), COALESCE(c.source_url, '')
+                   COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''), COALESCE(c.source_url, ''),
+                       {layer_columns}
             FROM chunks_fts f JOIN chunks c ON f.rowid = c.rowid
             WHERE chunks_fts MATCH ? {route_filter}
             ORDER BY rank LIMIT 30
@@ -156,7 +172,9 @@ def do_search(query: str, route: str = "all", top_k: int = 15, use_passage: bool
                 "is_main_text": bool(row[6]), "text": row[7],
                 "rank": row[8], "_bm25_rank": row[8],
                 "source_collection": row[9], "source_quality": row[10],
-                "page_kind": row[11], "page_label": row[12], "source_url": row[13]
+                "page_kind": row[11], "page_label": row[12], "source_url": row[13],
+                "text_layer": row[14], "text_layer_confidence": row[15],
+                "text_layer_provenance": row[16],
             }
     except Exception as e:
         pass
@@ -187,7 +205,8 @@ def do_search(query: str, route: str = "all", top_k: int = 15, use_passage: bool
                 SELECT c.id, c.source_path, c.mega_abteilung, c.band, c.source_type,
                        c.page, c.is_main_text, c.chunk_text,
                        COALESCE(c.source_collection, 'ocr'), COALESCE(c.source_quality, 'ocr'),
-                       COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''), COALESCE(c.source_url, '')
+                       COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''), COALESCE(c.source_url, ''),
+                       {layer_columns}
                 FROM chunks c
                 WHERE c.id IN ({placeholders}) {route_filter}
             """, ids):
@@ -197,6 +216,8 @@ def do_search(query: str, route: str = "all", top_k: int = 15, use_passage: bool
                     "is_main_text": bool(row[6]), "text": row[7],
                     "source_collection": row[8], "source_quality": row[9],
                     "page_kind": row[10], "page_label": row[11], "source_url": row[12],
+                    "text_layer": row[13], "text_layer_confidence": row[14],
+                    "text_layer_provenance": row[15],
                 }
             vec = hydrated
         except Exception:
@@ -346,7 +367,8 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
     # 格式化原始结果（含 debug 信号）
     raw_output = ""
     for i, r in enumerate(results):
-        tag = "正文" if r.get('is_main_text') else "编者"
+        tag = "TEXT卷" if r.get('is_main_text') else "APPARAT卷"
+        layer = text_layer_label(r)
         src = format_source_label(r)
         ocr_q = r.get('ocr_quality', '?')
         ocr_warn = " ⚠️ OCR质量低" if ocr_q in ('low', 'failed') else ""
@@ -355,11 +377,12 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
                   f"rrf={dbg.get('rrf_base','-')} | "
                   f"intent={dbg.get('intent_boost','-')} | "
                   f"volume={dbg.get('volume_boost','-')} | "
-                  f"type={dbg.get('type_boost','-')}")
+                  f"type={dbg.get('type_boost','-')} | "
+                  f"layer={dbg.get('layer_adjustment','-')}")
         # 优先使用 display_snippet，回退到原始 text 截断
         display_text = r.get('display_snippet', r.get('text', '')[:500])
         raw_output += f"""
-### [{i+1}] [{tag}] {src}{ocr_warn}
+### [{i+1}] [{tag}] [文献层级: {layer}] {src}{ocr_warn}
 {scores}
 {display_text}
 ---
@@ -426,6 +449,7 @@ def _call_flash(question, results, priority_terms=None):
 
 [证据 N] 来源: ... 层级: ... 德语原文关键句: ... 中文直译: ... 相关性: ...
 
+层级字段由本地分类器给定，不得自行改写：只有“作者原文（结构化文本）”可自动认定为马克思/恩格斯原文；“Textband 未分类”必须说明尚未自动判定，不能仅因位于 TEXT 卷就称为作者原文。
 诚实判断：如不相关，说明"当前索引中未找到直接相关段落"
 
 {chr(10).join(items)}"""
@@ -454,7 +478,7 @@ def _call_pro(question, evidence):
 
 要求:
 1. 基于证据给出严谨的学术回答
-2. 明确指出哪些是马克思/恩格斯原文，哪些是编者说明
+2. 严格沿用证据卡片的文献层级；只有标为“作者原文（结构化文本）”的证据可自动称为马克思/恩格斯原文，Textband 未分类材料必须保留不确定性
 3. 引证时注明 MEGA 卷册页码
 4. 如果证据不足，诚实说明
 5. 用中文回答"""
@@ -511,7 +535,7 @@ def build_ui():
             with gr.Column(scale=2):
                 route = gr.Dropdown(
                     label="文献过滤",
-                    choices=[("全部", "all"), ("正文 (Marx/Engels)", "main_text"), ("校勘 (Apparat)", "apparat")],
+                    choices=[("全部", "all"), ("TEXT 卷（含未分类材料）", "main_text"), ("APPARAT 校勘卷", "apparat")],
                     value="all")
                 retrieval_mode = gr.Dropdown(
                     label="检索模式",

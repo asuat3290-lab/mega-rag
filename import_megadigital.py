@@ -28,6 +28,10 @@ EXTRA_COLUMNS = {
     "page_kind": "TEXT DEFAULT 'pdf'",
     "page_label": "TEXT",
     "content_hash": "TEXT",
+    "text_layer": "TEXT DEFAULT 'unclassified'",
+    "text_layer_confidence": "REAL DEFAULT 0",
+    "text_layer_provenance": "TEXT DEFAULT ''",
+    "text_layer_version": "TEXT DEFAULT ''",
 }
 
 
@@ -122,6 +126,10 @@ def normalize_record(record: dict[str, Any], source_path: Path) -> dict[str, Any
         "page_kind": "megadigital_page",
         "page_label": extract_page_label(text),
         "content_hash": content_hash,
+        "text_layer": "author_text",
+        "text_layer_confidence": 0.99,
+        "text_layer_provenance": "text-layer-v1:structured_megadigital_text",
+        "text_layer_version": "text-layer-v1",
     }
 
 
@@ -144,8 +152,9 @@ def import_records(source: Path, metadata_db: Path, dry_run: bool, batch_size: i
             char_count, source_file, ocr_quality, alpha_ratio,
             german_word_ratio, indexed_at, source_collection, source_quality,
             source_record_id, source_doc, source_part, source_url, source_title,
-            page_kind, page_label, content_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            page_kind, page_label, content_hash, text_layer,
+            text_layer_confidence, text_layer_provenance, text_layer_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             source_path=excluded.source_path,
             mega_abteilung=excluded.mega_abteilung,
@@ -169,7 +178,19 @@ def import_records(source: Path, metadata_db: Path, dry_run: bool, batch_size: i
             source_title=excluded.source_title,
             page_kind=excluded.page_kind,
             page_label=excluded.page_label,
-            content_hash=excluded.content_hash
+            content_hash=excluded.content_hash,
+            text_layer=CASE
+                WHEN COALESCE(chunks.text_layer_provenance, '') LIKE 'manual:%'
+                    THEN chunks.text_layer ELSE excluded.text_layer END,
+            text_layer_confidence=CASE
+                WHEN COALESCE(chunks.text_layer_provenance, '') LIKE 'manual:%'
+                    THEN chunks.text_layer_confidence ELSE excluded.text_layer_confidence END,
+            text_layer_provenance=CASE
+                WHEN COALESCE(chunks.text_layer_provenance, '') LIKE 'manual:%'
+                    THEN chunks.text_layer_provenance ELSE excluded.text_layer_provenance END,
+            text_layer_version=CASE
+                WHEN COALESCE(chunks.text_layer_provenance, '') LIKE 'manual:%'
+                    THEN chunks.text_layer_version ELSE excluded.text_layer_version END
     """
 
     batch: list[tuple[Any, ...]] = []
@@ -192,6 +213,8 @@ def import_records(source: Path, metadata_db: Path, dry_run: bool, batch_size: i
             item["source_collection"], item["source_quality"], item["source_record_id"],
             item["source_doc"], item["source_part"], item["source_url"],
             item["source_title"], item["page_kind"], item["page_label"], item["content_hash"],
+            item["text_layer"], item["text_layer_confidence"],
+            item["text_layer_provenance"], item["text_layer_version"],
         ))
         if len(batch) >= batch_size:
             conn.executemany(sql, batch)

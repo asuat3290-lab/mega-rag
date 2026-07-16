@@ -7,6 +7,31 @@ import re
 from typing import List, Dict
 
 
+TEXT_LAYER_LABELS = {
+    "author_text": "作者原文（结构化文本）",
+    "apparatus": "校勘与编者考证",
+    "editorial_intro": "编者导言",
+    "editorial_note": "编辑说明",
+    "table_of_contents": "目录",
+    "front_matter": "卷首材料",
+    "register": "索引",
+    "illustration_list": "插图目录",
+    "textband_unclassified": "Textband 未分类（不可自动视为作者原文）",
+    "unclassified": "未分类",
+}
+
+
+def text_layer_label(record: Dict) -> str:
+    """Return a conservative, user-facing label for document provenance."""
+    layer = str(record.get("text_layer") or "unclassified")
+    return TEXT_LAYER_LABELS.get(layer, layer)
+
+
+def is_verified_author_text(record: Dict) -> bool:
+    """Only structured author text is automatically verified in classifier v1."""
+    return str(record.get("text_layer") or "") == "author_text"
+
+
 def format_source_label(record: Dict) -> str:
     """Keep PDF physical pages distinct from MEGAdigital page metadata."""
     abteilung = record.get("abteilung", "?")
@@ -99,12 +124,13 @@ def build_snippet_for_flash(results: List[Dict],
     """为 Flash 模型批量生成证据文本片段 (使用完整 snippet)"""
     items = []
     for i, r in enumerate(results[:max_items]):
-        tag = "正文" if r.get('is_main_text') else "编者说明"
+        legacy_tag = "TEXT卷" if r.get('is_main_text') else "APPARAT卷"
+        layer = text_layer_label(r)
         src = format_source_label(r)
 
         full_text = r.get('text', '')
         extracted = extract_best_snippet(full_text, priority_terms)
-        items.append(f"[{i+1}] {src} [{tag}]\n{extracted['snippet']}")
+        items.append(f"[{i+1}] {src} [{legacy_tag}] [文献层级: {layer}]\n{extracted['snippet']}")
     return items
 
 
@@ -117,3 +143,4 @@ def build_snippet_for_display(results: List[Dict],
         r['display_snippet'] = extracted['snippet']
         r['display_preview'] = extracted['preview']
         r['matched_term'] = extracted['matched_term']
+        r['text_layer_label'] = text_layer_label(r)

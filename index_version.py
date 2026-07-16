@@ -18,6 +18,7 @@ SCHEMA_MARKERS = (
     "passage_v1",
     "progress_v2",
     "source_provenance_v1",
+    "text_layer_v1",
 )
 
 
@@ -69,16 +70,33 @@ def _chunk_fingerprint(conn: sqlite3.Connection) -> dict[str, Any]:
         )
     ]
 
+    layer_expr = "COALESCE(text_layer, '')" if "text_layer" in columns else "''"
+    confidence_expr = (
+        "COALESCE(text_layer_confidence, 0)"
+        if "text_layer_confidence" in columns else "0"
+    )
+    provenance_expr = (
+        "COALESCE(text_layer_provenance, '')"
+        if "text_layer_provenance" in columns else "''"
+    )
+    layer_version_expr = (
+        "COALESCE(text_layer_version, '')"
+        if "text_layer_version" in columns else "''"
+    )
+
     digest = hashlib.sha256()
     missing_hashes = 0
-    for record_id, content_hash, char_count, fallback_text in conn.execute(
-        """
+    query = f"""
         SELECT id, COALESCE(content_hash, ''), COALESCE(char_count, 0),
-               CASE WHEN COALESCE(content_hash, '') = '' THEN chunk_text ELSE NULL END
+               CASE WHEN COALESCE(content_hash, '') = '' THEN chunk_text ELSE NULL END,
+               {layer_expr}, {confidence_expr}, {provenance_expr}, {layer_version_expr}
         FROM chunks
         ORDER BY id
-        """
-    ):
+    """
+    for (
+        record_id, content_hash, char_count, fallback_text,
+        text_layer, layer_confidence, layer_provenance, layer_version,
+    ) in conn.execute(query):
         if not content_hash:
             missing_hashes += 1
             content_hash = hashlib.sha256((fallback_text or "").encode("utf-8")).hexdigest()
@@ -87,6 +105,14 @@ def _chunk_fingerprint(conn: sqlite3.Connection) -> dict[str, Any]:
         digest.update(content_hash.encode("ascii", errors="ignore"))
         digest.update(b"\0")
         digest.update(str(char_count).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(str(text_layer).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(layer_confidence).encode("ascii", errors="ignore"))
+        digest.update(b"\0")
+        digest.update(str(layer_provenance).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(layer_version).encode("utf-8"))
         digest.update(b"\n")
 
     return {

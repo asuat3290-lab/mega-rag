@@ -20,6 +20,7 @@ META_DB = CONFIG['paths']['metadata_db']
 # ============================================================
 from glossary_loader import expand_with_glossary, load_glossary
 from query_analyzer import analyze_query
+from snippet_extractor import text_layer_label
 
 _GLOSSARY = load_glossary()
 
@@ -81,9 +82,9 @@ def generate_evidence(question: str, passages: list) -> str:
     # 拼装待处理文本
     items = []
     for i, r in enumerate(passages[:8]):
-        is_main = "正文" if r.get('is_main_text') else "编者说明"
+        layer = text_layer_label(r)
         src = f"MEGA {r.get('abteilung','?')}/{r.get('band','?')}, {r.get('type','?')}, S. {r.get('page','?')}"
-        items.append(f"[{i+1}] {src} [{is_main}]\n{r.get('text','')[:600]}")
+        items.append(f"[{i+1}] {src} [文献层级: {layer}]\n{r.get('text','')[:600]}")
     raw = "\n\n---\n".join(items)
 
     prompt = f"""你是马克思主义文献研究助手。用户问题：
@@ -96,7 +97,7 @@ def generate_evidence(question: str, passages: list) -> str:
 
 请为每条输出：
 1. 来源（卷/页）
-2. 层级（正文/编者注）
+2. 文献层级（严格沿用输入标签；只有“作者原文（结构化文本）”可自动认定为马克思/恩格斯原文）
 3. 德语原文关键句（1-2句）
 4. 中文直译
 5. 与问题的相关性（一句话）
@@ -176,7 +177,7 @@ if __name__ == "__main__":
     results = retrieve(rewrite['german_terms'], rewrite['route'], top_k=args.top)
     print(f"  找到 {len(results)} 条结果")
     for i, r in enumerate(results[:5]):
-        is_main = "[正文]" if r.get('is_main_text') else "[编者]"
+        is_main = f"[{text_layer_label(r)}]"
         src = f"MEGA {r.get('abteilung','?')}/{r.get('band','?')} [{r.get('type','?')}] p.{r.get('page','?')}"
         print(f"  [{i+1}] {is_main} {src}")
         print(f"      {r.get('text','')[:150]}...")

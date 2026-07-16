@@ -27,8 +27,21 @@ from cache import make_cache_key, cache_get, cache_put, cache_status
 from index_version import get_current_version
 from rerank import rerank, MODE_WEIGHTS
 from glossary_loader import expand_with_glossary, load_glossary
+from query_analyzer import analyze_query
+from snippet_extractor import text_layer_label, is_verified_author_text
 
 _GLOSSARY = load_glossary()
+
+
+def _layer_select_sql(conn: sqlite3.Connection, alias: str = "c") -> str:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(chunks)")}
+    if "text_layer" not in columns:
+        return "'unclassified', 0, ''"
+    return (
+        f"COALESCE({alias}.text_layer, 'unclassified'), "
+        f"COALESCE({alias}.text_layer_confidence, 0), "
+        f"COALESCE({alias}.text_layer_provenance, '')"
+    )
 
 def fts5_or(query: str) -> str:
     """多词用 OR 连接，过滤非拉丁字符（中文等）避免 FTS5 报错"""
@@ -43,11 +56,12 @@ def fts5_or(query: str) -> str:
 # ============================================================
 def search_bm25(query, top_k=30):
     conn = sqlite3.connect(str(META_DB))
+    layer_columns = _layer_select_sql(conn)
     fts_q = fts5_or(query)
     results = []
-    for row in conn.execute("""
+    for row in conn.execute(f"""
         SELECT c.id, c.source_path, c.mega_abteilung, c.band, c.source_type,
-               c.page, c.is_main_text, c.chunk_text, rank
+               c.page, c.is_main_text, c.chunk_text, rank, {layer_columns}
         FROM chunks_fts f
         JOIN chunks c ON f.rowid = c.rowid
         WHERE chunks_fts MATCH ?
@@ -57,7 +71,9 @@ def search_bm25(query, top_k=30):
         results.append({
             "id": row[0], "source_path": row[1], "abteilung": row[2],
             "band": row[3], "type": row[4], "page": row[5],
-            "is_main_text": bool(row[6]), "text": row[7],
+            "is_main_text": bool(row[6]), "text": row[7], "_bm25_rank": row[8],
+            "text_layer": row[9], "text_layer_confidence": row[10],
+            "text_layer_provenance": row[11],
         })
     conn.close()
     return results
@@ -79,17 +95,20 @@ def search_vector(query, top_k=30):
         results = tbl.search(query_vec).limit(top_k).to_list()
 
         conn = sqlite3.connect(str(META_DB))
+        layer_columns = _layer_select_sql(conn)
         enriched = []
         ids = [r['id'] for r in results]
         placeholders = ','.join(['?'] * len(ids))
         for row in conn.execute(
-            f"SELECT id, source_path, mega_abteilung, band, source_type, page, is_main_text, chunk_text FROM chunks WHERE id IN ({placeholders})",
+            f"SELECT c.id, c.source_path, c.mega_abteilung, c.band, c.source_type, c.page, c.is_main_text, c.chunk_text, {layer_columns} FROM chunks c WHERE c.id IN ({placeholders})",
             ids
         ):
             enriched.append({
                 "id": row[0], "source_path": row[1], "abteilung": row[2],
                 "band": row[3], "type": row[4], "page": row[5],
                 "is_main_text": bool(row[6]), "text": row[7],
+                "text_layer": row[8], "text_layer_confidence": row[9],
+                "text_layer_provenance": row[10],
             })
         conn.close()
 
@@ -137,18 +156,21 @@ def format_evidence(results, query):
     for i, r in enumerate(results[:10]):
         abt = {"I": "ERSTE", "II": "ZWEITE", "III": "DRITTE", "IV": "VIERTE"}.get(r['abteilung'], r['abteilung'])
         src = f"MEGA {r['abteilung']}/{r['band']}, {r['type']}, S. {r['page']}"
-        layer = "正文" if r['is_main_text'] else "编者说明/考证"
-        author = "Marx/Engels" if r['is_main_text'] else "MEGA 编者"
+        layer = text_layer_label(r)
+        verified_author = is_verified_author_text(r)
+        author = "Marx/Engels（结构化来源已验证）" if verified_author else "来源身份需按层级判断"
 
         lines.append(f"\n[证据 {i+1}]")
         lines.append(f"来源: {src}")
         lines.append(f"层级: {layer}")
         lines.append(f"作者: {author}")
         lines.append(f"德语原文: {r['text'][:500]}")
-        if not r['is_main_text']:
-            lines.append(f"可靠性: 编者考证，非马克思/恩格斯原文")
+        if verified_author:
+            lines.append("可靠性: 结构化作者原文")
+        elif r.get("text_layer") == "textband_unclassified":
+            lines.append("可靠性: Textband 页面，但尚未自动判定为作者原文或编者材料")
         else:
-            lines.append(f"可靠性: {author} 正文")
+            lines.append(f"可靠性: {layer}；不得仅凭 TEXT/APPARAT 卷别改写来源身份")
         lines.append("-" * 40)
 
     return "\n".join(lines)
@@ -185,6 +207,7 @@ if __name__ == "__main__":
     # 查询扩展
     expanded, matched_terms, hints = expand_with_glossary(args.query, _GLOSSARY)
     search_query = expanded if expanded != args.query else args.query
+    query_profile = analyze_query(args.query, search_query, matched_terms, _GLOSSARY)
 
     # 缓存检查
     idx_ver = get_current_version()
@@ -202,7 +225,7 @@ if __name__ == "__main__":
 
     # Metadata boost via reranker
     results = rerank(results, query=search_query, mode=args.mode, method=args.rerank,
-                     glossary_terms=[t for t in matched_terms])
+                     glossary_terms=[t for t in matched_terms], query_profile=query_profile)
     results = results[:args.top]
 
     if args.evidence:
@@ -212,7 +235,7 @@ if __name__ == "__main__":
         print(f"查询: '{args.query}' | 模式: {args.mode} | 重排: {args.rerank} | 结果: {len(results)} 条\n")
         for i, r in enumerate(results):
             src = f"MEGA {r['abteilung']}/{r['band']} [{r.get('type', r.get('source_type','?'))}] p.{r.get('page', r.get('page_no','?'))}"
-            tag = "[正文]" if r.get('is_main_text') else "[编者]"
+            tag = f"[{text_layer_label(r)}]"
             scores = f"final={r.get('final_score', '-')} bm25={r.get('bm25_score','-')}"
             print(f"[{i+1}] {tag} {src} | {scores}")
             print(f"    {r['text'][:250]}")

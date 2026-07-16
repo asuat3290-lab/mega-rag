@@ -26,6 +26,28 @@ def _is_noise(text: str) -> bool:
     return any(p.lower() in txt200.lower() for p in _NOISE_PATTERNS)
 
 
+def _text_layer_adjustment(text_layer: str, intent: str) -> float:
+    """Conservative layer signal; unknown Textband pages are never auto-promoted."""
+    layer = text_layer or "unclassified"
+    if intent == "author_argument":
+        return {
+            "author_text": 0.04,
+            "editorial_intro": -0.18,
+            "editorial_note": -0.20,
+            "table_of_contents": -0.35,
+            "front_matter": -0.40,
+            "register": -0.25,
+            "illustration_list": -0.35,
+        }.get(layer, 0.0)
+    if intent == "apparat_question":
+        return {
+            "editorial_note": 0.08,
+            "editorial_intro": 0.03,
+            "apparatus": 0.03,
+        }.get(layer, 0.0)
+    return 0.0
+
+
 def rerank_rule(results: List[Dict],
                 query: str = "",
                 mode: str = "balanced",
@@ -97,6 +119,8 @@ def rerank_rule(results: List[Dict],
         out_of_scope_penalty = 0.0
         source_collection = r.get("source_collection", "ocr")
         source_boost = 0.18 if source_collection == "megadigital" else 0.0
+        text_layer = str(r.get("text_layer") or "unclassified")
+        layer_adjustment = _text_layer_adjustment(text_layer, intent)
 
         # 温和的卷加权（范围约束由 scope_constrained_rerank 负责）
         if target_vol_match:
@@ -115,7 +139,8 @@ def rerank_rule(results: List[Dict],
                  ocr_boost * 0.04 -
                  noise_penalty +
                  volume_boost +
-                  source_boost -
+                 source_boost +
+                 layer_adjustment -
                  out_of_scope_penalty)
 
         r['rrf_score'] = rrf_base
@@ -125,6 +150,7 @@ def rerank_rule(results: List[Dict],
         r['intent_boost'] = round(intent_boost, 3)
         r['volume_boost'] = round(volume_boost, 3)
         r['source_boost'] = round(source_boost, 3)
+        r['layer_adjustment'] = round(layer_adjustment, 3)
         r['out_of_scope_penalty'] = round(out_of_scope_penalty, 3)
         r['final_score'] = round(final, 4)
         r['_debug'] = {
@@ -132,6 +158,8 @@ def rerank_rule(results: List[Dict],
             "type_boost": round(type_boost, 3),
             "volume_boost": round(volume_boost, 3),
             "source_boost": round(source_boost, 3),
+            "text_layer": text_layer,
+            "layer_adjustment": round(layer_adjustment, 3),
             "intent_boost": round(intent_boost, 3),
             "exact_score": round(exact_score, 3),
             "gloss_score": round(gloss_score, 3),

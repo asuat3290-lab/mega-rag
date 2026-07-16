@@ -106,3 +106,20 @@
 - `extract_best_snippet()` 返回结构化：`{snippet, preview, matched_term}`
 - preview 围绕 matched_term 居中 (50+150 字符)
 - Flash 使用完整 snippet
+
+## 文献层级元数据
+
+检索流水线在查询前依赖 `text_layer.py` 产生的保守层级元数据。它解决的是“卷别”和“作者身份”不能等同的问题：
+
+```text
+source record
+  → text_layer classifier
+  → text_layer / confidence / provenance / version
+  → retrieval hydration
+  → intent-aware layer adjustment
+  → snippet / Flash / Pro provenance labels
+```
+
+`rerank.py` 只对高置信结构类型施加层级信号。正文论述型问题会降低编者导言、编辑说明、目录和卷首材料的排名；APPARAT 意图仍保留编者材料。`textband_unclassified` 不被删除，也不会自动获得“作者原文”身份。
+
+Web UI、`search_cli.py`、`query.py` 和跨卷时间线均从 SQLite 读取同一组层级字段。详细类别、人工覆盖和回滚规则见 [text_layer_classification.md](text_layer_classification.md)。
