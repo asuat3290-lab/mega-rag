@@ -1,0 +1,86 @@
+# MEGA² 中德术语对照表 — 用于查询扩展
+# 格式: 中文术语: "德语检索词（空格分隔，含同义词/变体/旧拼写）"
+
+terms:
+  # === 历史唯物主义核心 ===
+  现实的人: "wirkliche Individuen wirklichen Menschen wirklich thätigen Menschen leibhaftigen Menschen lebendiger menschlicher Individuen"
+  生产: "Produktion Produktionsweise Produktionsverhältnisse produktiv"
+  生产力: "Produktivkräfte Produktionskraft produktive Kraft"
+  生产关系: "Produktionsverhältnisse Verkehrsverhältnisse"
+  交往: "Verkehr Verkehrsform Verkehrsverhältnisse"
+  分工: "Theilung der Arbeit Arbeitstheilung"
+
+  # === 共同体 ===
+  共同体: "Gemeinschaft Gemeinwesen Gemeindewesen Assoziation Verein"
+  虚幻的共同体: "illusorische Gemeinschaft scheinbare Gemeinschaft"
+  真正的共同体: "wirkliche Gemeinschaft wirkliches Gemeinwesen"
+  阶级: "Klasse Klassen Klassenkampf Klassenherrschaft"
+  国家: "Staat Staatsgewalt Staatsmaschinerie politische Gewalt"
+
+  # === 异化 ===
+  异化: "Entfremdung entfremdete Arbeit Entäußerung Veräußerung Vergegenständlichung"
+  外化: "Entäußerung Veräußerung"
+  对象化: "Vergegenständlichung Gegenständlichkeit"
+  物化: "Verdinglichung Versachlichung"
+
+  # === 政治经济学 ===
+  剩余价值: "Mehrwert Surpluswert surplus value"
+  资本: "Kapital Kapitalverhältnis Kapitalverwertung"
+  价值: "Wert Tauschwert Gebrauchswert Werth"
+  商品: "Waare Ware Waarenform"
+  货币: "Geld Geldform Gold Silber"
+  利润: "Profit Profitrate Durchschnittsprofit"
+  地租: "Grundrente Rente Differentialrente"
+  工资: "Arbeitslohn Lohn Lohnarbeit"
+  私有财产: "Privateigenthum Eigenthum Privateigentum"
+  剥削: "Ausbeutung Exploitation"
+
+  # === 劳动概念 ===
+  一般劳动: "allgemeine Arbeit allgemeinen Arbeit allgemeiner Arbeit abstrakte Arbeit abstract labour"
+  抽象劳动: "abstrakte Arbeit abstrakten Arbeit abstrakter Arbeit abstract labour"
+  具体劳动: "konkrete Arbeit konkreten Arbeit nützliche Arbeit concrete labour"
+
+  # === 历史阶段 ===
+  封建: "feudal Feudalismus Feudalität Leibeigenschaft"
+  市民社会: "bürgerliche Gesellschaft bürgerlichen Gesellschaft"
+  资本主义: "Kapitalismus kapitalistische Produktionsweise"
+  共产主义: "Kommunismus communistisch"
+  社会主义: "Sozialismus socialistisch"
+
+  # === 意识/意识形态 ===
+  意识形态: "Ideologie ideologisch Bewußtseinsformen ideologische"
+  意识: "Bewußtsein Bewusstsein"
+  观念: "Vorstellung Vorstellungen Idee"
+
+  # === 方法论 ===
+  辩证法: "Dialektik dialektisch"
+  唯物: "materialistisch Materialismus materiell"
+  抽象: "Abstraktion abstrakt abstrahiren"
+  具体: "konkret Concrete"
+  归摄: "Subsumtion subsumieren subsumiert"
+  subsumption: "Subsumtion subsumieren subsumiert"
+  黑格尔法哲学批判: "Hegelschen Rechtsphilosophie Hegel Rechtsphilosophie Kritik"
+
+  # === 书信 ===
+  书信: "Brief Briefwechsel Korrespondenz"
+  马克思致恩格斯: "Marx an Engels"
+  恩格斯致马克思: "Engels an Marx"
+
+  # === 手稿/笔记 ===
+  手稿: "Manuskript Manuskripte Handschrift"
+  摘录: "Exzerpt Exzerpte Auszug"
+  笔记: "Notiz Notizen Heft Notizbuch"
+  批注: "Randglosse Marginalie Anmerkung"
+
+  # === 人物 ===
+  黑格尔: "Hegel Hegelschen Philosophie"
+  费尔巴哈: "Feuerbach Feuerbachs"
+  蒲鲁东: "Proudhon Proudhons"
+  李嘉图: "Ricardo Ricardos"
+  斯密: "Smith Adam Smith"
+
+  # === 财务状况 / 生活条件 ===
+  经济状况: "Geld Pfund Sterling Schilling Wechsel Einkommen Einnahme Schulden Kredit Erbschaft Honorar Finanzen Misere Elend Geldnot"
+  贫困: "Armut Elend Not Misere poverty Geldnot Geldschwierigkeit"
+  稿费: "Tribune Article Artikel Honorar Pfund Sterling Bezahlung Zahlung"
+  债务: "Schulden Schuld Wechsel Kredit Pfand Leihhaus Verpfändung"

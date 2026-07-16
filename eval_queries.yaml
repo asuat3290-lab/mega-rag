@@ -1,0 +1,40 @@
+# MEGA² RAG 评估查询集
+queries:
+  - zh: "现实的人"
+    de_expected: ["wirkliche Individuen", "wirklichen Menschen", "wirklich thätigen Menschen"]
+    preferred_abteilung: "I"
+    preferred_band: "5"
+    preferred_type: "TEXT"
+
+  - zh: "共同体"
+    de_expected: ["Gemeinschaft", "Gemeinwesen", "Assoziation"]
+    preferred_abteilung: "I"
+    preferred_band: "5"
+    preferred_type: "TEXT"
+
+  - zh: "阶级"
+    de_expected: ["Klasse", "Klassen", "Klassenkampf"]
+    preferred_abteilung: "I"
+    preferred_type: "TEXT"
+
+  - zh: "市民社会"
+    de_expected: ["bürgerliche Gesellschaft", "bürgerlichen Gesellschaft"]
+    preferred_abteilung: "I"
+    preferred_type: "TEXT"
+
+  - zh: "意识形态"
+    de_expected: ["Ideologie", "ideologisch", "Bewußtseinsformen"]
+    preferred_abteilung: "I"
+    preferred_band: "5"
+    preferred_type: "TEXT"
+
+  - zh: "异化劳动"
+    de_expected: ["entfremdete Arbeit", "Entfremdung", "Entäußerung"]
+    preferred_abteilung: "I"
+    preferred_band: "3"
+    preferred_type: "TEXT"
+
+  - zh: "剩余价值"
+    de_expected: ["Mehrwert", "Surpluswert", "surplus value"]
+    preferred_abteilung: "II"
+    preferred_type: "TEXT"
