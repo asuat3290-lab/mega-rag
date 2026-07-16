@@ -45,6 +45,15 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "ON chunks(source_collection, mega_abteilung, band, source_type)"
     )
     conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS index_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
         "UPDATE chunks SET source_collection = 'ocr' "
         "WHERE source_collection IS NULL OR source_collection = ''"
     )
@@ -229,6 +238,16 @@ def import_records(source: Path, metadata_db: Path, dry_run: bool, batch_size: i
 
     if conn:
         conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
+        if counters["written"]:
+            conn.execute(
+                """
+                INSERT INTO index_state(key, value, updated_at)
+                VALUES ('passages_complete', '0', ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value='0', updated_at=excluded.updated_at
+                """,
+                (datetime.now().isoformat(),),
+            )
         conn.commit()
         conn.close()
 

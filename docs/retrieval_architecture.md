@@ -123,3 +123,13 @@ source record
 `rerank.py` 只对高置信结构类型施加层级信号。正文论述型问题会降低编者导言、编辑说明、目录和卷首材料的排名；APPARAT 意图仍保留编者材料。`textband_unclassified` 不被删除，也不会自动获得“作者原文”身份。
 
 Web UI、`search_cli.py`、`query.py` 和跨卷时间线均从 SQLite 读取同一组层级字段。详细类别、人工覆盖和回滚规则见 [text_layer_classification.md](text_layer_classification.md)。
+## Passage v2 检索层
+
+页级 `chunks_fts` 和 LanceDB 继续作为安全基线。`passage_index.py` 为合格页面建立带 overlap 的精确字符区间，并使用独立的 `passages_fts`：
+
+```text
+passages_fts BM25 → page_id → page-level vector reinforcement
+                         ↘ no lexical passage: page fallback
+```
+
+Web UI 只在 passage 表与 FTS 数量一致且 `passages_fts_dirty=0` 时启用该层。目标卷定向召回仍以页为单位，但通过 `page_id` 与 passage 合并，因此不会重复展示同一页。完整运维规则见 [passage_index.md](passage_index.md)。

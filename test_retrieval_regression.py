@@ -67,19 +67,13 @@ def run_test(query: str, expected_terms_in_snippet: list = None,
 
     # Scoped injection (mirrors webui.py)
     if profile.get('target_abteilung') and profile.get('intent') == 'author_argument':
-        from webui import do_scoped_search
+        from webui import do_scoped_search, merge_scoped_candidates
         scoped_terms = [t for t in priority[:10] if len(t) > 2]
         scoped_r = do_scoped_search(scoped_terms,
                                      target_abt=profile['target_abteilung'],
                                      target_band=profile.get('target_band'),
                                      text_only=True, top_k=20)
-        existing_ids = {r.get('id', '') for r in search_results}
-        injected = 0
-        for sr in scoped_r:
-            if sr['id'] not in existing_ids:
-                search_results.append(sr)
-                existing_ids.add(sr['id'])
-                injected += 1
+        injected = merge_scoped_candidates(search_results, scoped_r)
         result["scoped_found"] = len(scoped_r)
         result["scoped_injected"] = injected
 

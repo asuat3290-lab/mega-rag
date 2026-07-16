@@ -20,7 +20,7 @@ META_DB = CONFIG['paths']['metadata_db']
 # ============================================================
 from glossary_loader import expand_with_glossary, load_glossary
 from query_analyzer import analyze_query
-from snippet_extractor import text_layer_label
+from snippet_extractor import text_layer_label, format_source_label
 
 _GLOSSARY = load_glossary()
 
@@ -83,7 +83,7 @@ def generate_evidence(question: str, passages: list) -> str:
     items = []
     for i, r in enumerate(passages[:8]):
         layer = text_layer_label(r)
-        src = f"MEGA {r.get('abteilung','?')}/{r.get('band','?')}, {r.get('type','?')}, S. {r.get('page','?')}"
+        src = format_source_label(r)
         items.append(f"[{i+1}] {src} [文献层级: {layer}]\n{r.get('text','')[:600]}")
     raw = "\n\n---\n".join(items)
 
@@ -178,7 +178,7 @@ if __name__ == "__main__":
     print(f"  找到 {len(results)} 条结果")
     for i, r in enumerate(results[:5]):
         is_main = f"[{text_layer_label(r)}]"
-        src = f"MEGA {r.get('abteilung','?')}/{r.get('band','?')} [{r.get('type','?')}] p.{r.get('page','?')}"
+        src = format_source_label(r)
         print(f"  [{i+1}] {is_main} {src}")
         print(f"      {r.get('text','')[:150]}...")
     t_search = datetime.now()

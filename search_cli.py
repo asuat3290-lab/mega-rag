@@ -28,7 +28,8 @@ from index_version import get_current_version
 from rerank import rerank, MODE_WEIGHTS
 from glossary_loader import expand_with_glossary, load_glossary
 from query_analyzer import analyze_query
-from snippet_extractor import text_layer_label, is_verified_author_text
+from snippet_extractor import text_layer_label, is_verified_author_text, format_source_label
+from passage_index import search_passages
 
 _GLOSSARY = load_glossary()
 
@@ -46,7 +47,13 @@ def _layer_select_sql(conn: sqlite3.Connection, alias: str = "c") -> str:
 def fts5_or(query: str) -> str:
     """多词用 OR 连接，过滤非拉丁字符（中文等）避免 FTS5 报错"""
     import re
-    words = [w for w in query.split() if len(w) > 1 and re.match(r'^[a-zA-ZäöüßÄÖÜẞ]+$', w)]
+    operators = {'AND', 'OR', 'NOT', 'NEAR'}
+    words = [
+        w for w in query.split()
+        if len(w) > 1
+        and w.upper() not in operators
+        and re.match(r'^[a-zA-ZäöüßÄÖÜẞ]+$', w)
+    ]
     if not words:
         return query  # 无有效德语词时返回原词（让 FTS5 自己处理）
     return " OR ".join(words) if len(words) > 1 else words[0]
@@ -58,6 +65,10 @@ def search_bm25(query, top_k=30):
     conn = sqlite3.connect(str(META_DB))
     layer_columns = _layer_select_sql(conn)
     fts_q = fts5_or(query)
+    passage_results = search_passages(conn, fts_q, route="all", limit=top_k)
+    if passage_results:
+        conn.close()
+        return passage_results
     results = []
     for row in conn.execute(f"""
         SELECT c.id, c.source_path, c.mega_abteilung, c.band, c.source_type,
@@ -132,10 +143,15 @@ def search_hybrid(query, top_k=20, bm25_k=30, vec_k=30, rrf_k=60):
         scores[r['id']] = scores.get(r['id'], 0) + 1 / (rrf_k + rank + 1)
         scores[f"_{r['id']}_data"] = r
 
+    passage_by_page = {
+        r.get("page_id"): r["id"] for r in bm25_results
+        if r.get("record_type") == "passage" and r.get("page_id")
+    }
     for rank, r in enumerate(vec_results):
-        scores[r['id']] = scores.get(r['id'], 0) + 1 / (rrf_k + rank + 1)
-        if f"_{r['id']}_data" not in scores:
-            scores[f"_{r['id']}_data"] = r
+        target_id = passage_by_page.get(r['id'], r['id'])
+        scores[target_id] = scores.get(target_id, 0) + 1 / (rrf_k + rank + 1)
+        if f"_{target_id}_data" not in scores:
+            scores[f"_{target_id}_data"] = r
 
     merged = []
     for key, score in scores.items():
@@ -155,7 +171,7 @@ def format_evidence(results, query):
     lines = [f"查询: {query}", "=" * 60]
     for i, r in enumerate(results[:10]):
         abt = {"I": "ERSTE", "II": "ZWEITE", "III": "DRITTE", "IV": "VIERTE"}.get(r['abteilung'], r['abteilung'])
-        src = f"MEGA {r['abteilung']}/{r['band']}, {r['type']}, S. {r['page']}"
+        src = format_source_label(r)
         layer = text_layer_label(r)
         verified_author = is_verified_author_text(r)
         author = "Marx/Engels（结构化来源已验证）" if verified_author else "来源身份需按层级判断"
@@ -234,7 +250,7 @@ if __name__ == "__main__":
     else:
         print(f"查询: '{args.query}' | 模式: {args.mode} | 重排: {args.rerank} | 结果: {len(results)} 条\n")
         for i, r in enumerate(results):
-            src = f"MEGA {r['abteilung']}/{r['band']} [{r.get('type', r.get('source_type','?'))}] p.{r.get('page', r.get('page_no','?'))}"
+            src = format_source_label(r)
             tag = f"[{text_layer_label(r)}]"
             scores = f"final={r.get('final_score', '-')} bm25={r.get('bm25_score','-')}"
             print(f"[{i+1}] {tag} {src} | {scores}")

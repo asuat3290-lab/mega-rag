@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 SCHEMA_MARKERS = (
     "fts_v3",
     "lancedb_v3",
-    "passage_v1",
+    "passage_v2",
     "progress_v2",
     "source_provenance_v1",
     "text_layer_v1",

@@ -112,3 +112,20 @@ Failure: 结果过于集中单一卷 → balance 问题
     "description": "...",
 }
 ```
+## Passage v2 防回退
+
+运行：
+
+```powershell
+python test_passage_index.py
+```
+
+该测试验证：
+
+- 切分结果存在 overlap 且不超过配置边界；
+- `char_start` / `char_end` 能精确还原原文；
+- passage 与 FTS 条数一致；
+- 所有合格页面均被覆盖且没有孤儿记录；
+- `Subsumtion AND Rechtsphilosophie` 能在 I/2 TEXT 中返回 passage 证据。
+
+修改 `passage_index.py`、`webui.py` 的融合逻辑、passage 配置或重建数据库后，必须同时运行 passage 测试和原有 8 项检索回归。

@@ -38,11 +38,14 @@ def format_source_label(record: Dict) -> str:
     band = record.get("band", "?")
     text_type = record.get("type", record.get("source_type", "?"))
     page = record.get("page", record.get("page_no", "?"))
+    passage_suffix = ""
+    if record.get("record_type") == "passage":
+        passage_suffix = f", passage {int(record.get('passage_no', 0)) + 1}"
     if record.get("page_kind") == "megadigital_page":
         page_label = record.get("page_label") or ""
         suffix = f"; text p. {page_label}" if page_label else ""
-        return f"MEGAdigital MEGA {abteilung}/{band}, {text_type}, source p. {page}{suffix}"
-    return f"MEGA {abteilung}/{band}, {text_type}, PDF p. {page}"
+        return f"MEGAdigital MEGA {abteilung}/{band}, {text_type}, source p. {page}{suffix}{passage_suffix}"
+    return f"MEGA {abteilung}/{band}, {text_type}, PDF p. {page}{passage_suffix}"
 
 def extract_best_snippet(full_text: str, priority_terms: List[str],
                          before: int = 250, after: int = 900) -> Dict:

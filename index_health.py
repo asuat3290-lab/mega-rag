@@ -116,6 +116,48 @@ def collect_health(exact_vectors: bool = True, compute_version: bool = True, dee
             if table_exists(conn, "passages")
             else 0
         )
+        report["passage_fts"] = (
+            conn.execute("SELECT COUNT(*) FROM passages_fts").fetchone()[0]
+            if table_exists(conn, "passages_fts")
+            else 0
+        )
+        report["passage_pages"] = (
+            conn.execute("SELECT COUNT(DISTINCT page_id) FROM passages").fetchone()[0]
+            if report["passages"] else 0
+        )
+        report["passage_orphaned"] = (
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM passages WHERE page_id NOT IN (
+                    SELECT id FROM chunks
+                    WHERE COALESCE(char_count, LENGTH(chunk_text), 0) >= 80
+                      AND COALESCE(chunk_text, '') <> ''
+                      AND COALESCE(ocr_quality, 'medium') <> 'failed'
+                )
+                """
+            ).fetchone()[0] if report["passages"] else 0
+        )
+        report["passage_eligible_pages"] = conn.execute(
+            """
+            SELECT COUNT(*) FROM chunks
+            WHERE COALESCE(char_count, LENGTH(chunk_text), 0) >= 80
+              AND COALESCE(chunk_text, '') <> ''
+              AND COALESCE(ocr_quality, 'medium') <> 'failed'
+            """
+        ).fetchone()[0]
+        report["passage_dirty"] = False
+        report["passage_complete"] = report["passages"] == 0
+        if table_exists(conn, "index_state"):
+            dirty_row = conn.execute(
+                "SELECT value FROM index_state WHERE key='passages_fts_dirty'"
+            ).fetchone()
+            complete_row = conn.execute(
+                "SELECT value FROM index_state WHERE key='passages_complete'"
+            ).fetchone()
+            report["passage_dirty"] = bool(dirty_row and dirty_row[0] == "1")
+            report["passage_complete"] = bool(
+                complete_row and complete_row[0] == "1"
+            )
         report["content_hash_missing"] = (
             conn.execute(
                 "SELECT COUNT(*) FROM chunks WHERE COALESCE(content_hash, '')=''"
@@ -239,6 +281,16 @@ def collect_health(exact_vectors: bool = True, compute_version: bool = True, dee
         report["warnings"].append("progress_rows_without_ocr_file")
     if report["content_hash_missing"]:
         report["errors"].append("legacy_chunks_missing_content_hash")
+    if report.get("passages") != report.get("passage_fts"):
+        report["errors"].append("passage_fts_count_mismatch")
+    if report.get("passage_dirty"):
+        report["errors"].append("passage_fts_dirty")
+    if report.get("passages") and not report.get("passage_complete"):
+        report["warnings"].append("passage_index_incomplete_page_fallback_active")
+    if report.get("passage_orphaned"):
+        report["errors"].append("orphaned_passages")
+    if report.get("passages") and report.get("passage_pages") != report.get("passage_eligible_pages"):
+        report["warnings"].append("passage_page_coverage_incomplete")
     if exact_vectors and vector_report.get("duplicates"):
         report["errors"].append("duplicate_vectors")
     if exact_vectors and vector_report.get("stale"):
@@ -269,7 +321,12 @@ def print_summary(report: dict[str, Any]) -> None:
     )
     for source, values in report.get("sources", {}).items():
         print(f"    {source}: {values['chunks']:,} chunks, {values['chars']:,} chars")
-    print(f"  Passages:        {report.get('passages', 0):,}")
+    print(
+        f"  Passages / FTS:  {report.get('passages', 0):,} / "
+        f"{report.get('passage_fts', 0):,}; pages "
+        f"{report.get('passage_pages', 0):,}/{report.get('passage_eligible_pages', 0):,}; "
+        f"dirty={report.get('passage_dirty', False)} complete={report.get('passage_complete', False)}"
+    )
     print(f"  Content hashes:  missing {report.get('content_hash_missing', 0):,}")
     print(f"  Progress status: {report.get('progress', {})}")
     print(f"  Embeddings:      {report.get('embedding_progress', {})}")

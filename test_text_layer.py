@@ -56,6 +56,11 @@ def check_incremental_upsert(failures: list[str]) -> None:
                 reason TEXT, content_hash TEXT, embedding_status TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE index_state (
+                key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+        """)
         meta = {
             "id": "fixture", "source_path": "fixture/page_1.txt",
             "mega_abteilung": "I", "band": "2", "source_type": "TEXT",
@@ -90,6 +95,11 @@ def check_incremental_upsert(failures: list[str]) -> None:
             failures.append("incremental upsert did not refresh OCR text")
         if row[2] != "author_text" or not row[3].startswith("manual:"):
             failures.append("incremental upsert overwrote manual text-layer metadata")
+        passage_state = conn.execute(
+            "SELECT value FROM index_state WHERE key='passages_complete'"
+        ).fetchone()
+        if passage_state != ("0",):
+            failures.append("incremental OCR write did not invalidate passage coverage")
     finally:
         conn.close()
 

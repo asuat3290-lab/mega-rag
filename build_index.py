@@ -3,7 +3,7 @@
 MEGA² RAG — 元数据 + FTS5 全文索引 + 向量索引 构建脚本
 增量模式：只索引尚未入库的页面
 """
-import sys, os, re, hashlib, yaml, sqlite3
+import sys, os, re, hashlib, yaml, sqlite3, json
 from pathlib import Path
 from datetime import datetime
 
@@ -422,6 +422,8 @@ def _flush_batch(conn, batch_meta, ollama, emb_model, use_embedding) -> int:
                 embedding_status='pending'
         """, (meta['source_path'], now, meta['content_hash']))
     conn.commit()
+    if batch_meta:
+        _set_index_state(conn, "passages_complete", "0")
 
     if not use_embedding:
         return 0
@@ -674,76 +676,6 @@ def backfill_content_hashes(batch_size: int = 500) -> dict:
     return {"requested": total, "completed": completed, "index_version": version}
 
 
-def chunk_pages(chunk_size: int = 500, chunk_overlap: int = 80):
-    """将已有 page-level chunks 切分为 passages。不删除原有数据。"""
-    import sqlite3, hashlib
-    conn = sqlite3.connect(str(META_DB))
-
-    pages = conn.execute("""
-        SELECT id, source_path, mega_abteilung, band, source_type, page, chunk_text, source_file
-        FROM chunks WHERE char_count > 100 AND ocr_quality != 'failed'
-    """).fetchall()
-
-    if not pages:
-        print("没有可切分的页面", flush=True)
-        conn.close()
-        return
-
-    total_passages = 0
-    for pid, spath, abt, band, stype, pno, text, sfile in pages:
-        # 按段落切分
-        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-        if not paragraphs:
-            paragraphs = [text]
-
-        passage_no = 0
-        current = ""
-        char_start = 0
-        for para in paragraphs:
-            # 简单按字符数切分
-            words = para.split()
-            i = 0
-            while i < len(words):
-                chunk_words = []
-                chunk_len = 0
-                while i < len(words) and chunk_len < chunk_size:
-                    chunk_words.append(words[i])
-                    chunk_len += len(words[i]) + 1
-                    i += 1
-
-                chunk_text = ' '.join(chunk_words)
-                if len(chunk_text) < 30:
-                    continue
-
-                passage_id = hashlib.md5(f"{pid}_p{passage_no}".encode()).hexdigest()[:16]
-                c_start = char_start
-                c_end = char_start + len(chunk_text)
-
-                q = assess_quality(chunk_text)
-                conn.execute("""
-                    INSERT OR REPLACE INTO passages
-                    (passage_id, page_id, abteilung, band, text_type, page_no, passage_no,
-                     text, char_start, char_end, ocr_quality, source_pdf, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (passage_id, pid, abt, band, stype, pno, passage_no,
-                      chunk_text, c_start, c_end,
-                      {"high": 0.9, "medium": 0.6, "low": 0.3, "failed": 0.1}.get(q['quality'], 0.5),
-                      sfile, datetime.now().isoformat()))
-
-                passage_no += 1
-                total_passages += 1
-                char_start = c_end + chunk_overlap
-
-        if total_passages % 500 == 0:
-            conn.commit()
-            conn.execute("INSERT INTO passages_fts(passages_fts) VALUES ('rebuild')")
-            print(f"  已切分 {total_passages} 个 passage...", flush=True)
-
-    conn.commit()
-    conn.execute("INSERT INTO passages_fts(passages_fts) VALUES ('rebuild')")
-    conn.close()
-    print(f"✅ Passage 切分完成: {total_passages} 个 passage", flush=True)
-
 
 def search(query, top_k=10):
     import sqlite3
@@ -787,8 +719,8 @@ if __name__ == "__main__":
     parser.add_argument("--backfill-hashes", action="store_true", help="Backfill stable content hashes for legacy chunks")
     parser.add_argument("--chunk-pages", action="store_true", help="切分已有页面为 passage")
     parser.add_argument("--rechunk", action="store_true", help="重新切分（清空旧 passage 数据）")
-    parser.add_argument("--chunk-size", type=int, default=500, help="Passage 目标大小 (chars, 默认 500)")
-    parser.add_argument("--chunk-overlap", type=int, default=80, help="Passage overlap (chars, 默认 80)")
+    parser.add_argument("--chunk-size", type=int, default=260, help="Passage 目标大小（近似词元，默认 260）")
+    parser.add_argument("--chunk-overlap", type=int, default=50, help="Passage overlap（近似词元，默认 50）")
     args = parser.parse_args()
 
     if args.vector_status:
@@ -835,18 +767,25 @@ if __name__ == "__main__":
             """))
         except sqlite3.Error:
             source_stats = []
-        # Passage count
-        pass_count = 0
+        # Passage status
         try:
-            pass_count = conn.execute("SELECT COUNT(*) FROM passages").fetchone()[0]
-        except: pass
+            from passage_index import passage_status
+            pass_status = passage_status()
+            pass_count = pass_status.get("passages", 0)
+        except Exception:
+            pass_status = {"passages": 0, "fts": 0, "pages": 0, "dirty": True}
+            pass_count = 0
         # Index version
         idx_ver = get_current_version()
         print(f"索引状态: {total} 页 | TEXT: {text_count} | APPARAT: {apparat_count} | {chars:,} 字符 | FTS5: {fts} 条")
         for source, records, source_chars in source_stats:
             print(f"来源 {source}: {records} 条 | {source_chars:,} 字符")
         print(f"OCR 质量: {qdist}")
-        print(f"Passage: {pass_count} 个")
+        print(
+            f"Passage: {pass_count} 个 | FTS: {pass_status.get('fts', 0)} | "
+            f"覆盖页: {pass_status.get('pages', 0)}/{pass_status.get('eligible_pages', 0)} | "
+            f"dirty={pass_status.get('dirty', False)}"
+        )
         print(f"Index Version: {idx_ver}")
         conn.close()
         sys.exit(0)
@@ -861,17 +800,17 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.chunk_pages:
-        if args.rechunk:
-            import sqlite3
-            conn = sqlite3.connect(str(META_DB))
-            conn.execute("DELETE FROM passages")
-            conn.execute("DELETE FROM passages_fts")
-            conn.commit()
-            conn.close()
-            print("已清空旧 passage 数据", flush=True)
-        chunk_pages(args.chunk_size, args.chunk_overlap)
-        v = store_version("passage_chunk")
-        print(f"📌 索引版本: {v}")
+        from passage_index import build_passage_index
+        result = build_passage_index(
+            target_tokens=args.chunk_size,
+            overlap_tokens=args.chunk_overlap,
+            rebuild=args.rechunk,
+        )
+        result["index_version"] = (
+            get_current_version() if result.get("no_op")
+            else store_version("passage_v2_build")
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         sys.exit(0)
 
     if args.build:

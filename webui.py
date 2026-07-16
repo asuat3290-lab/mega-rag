@@ -24,6 +24,7 @@ from ocr_quality import assess_quality
 from query_analyzer import analyze_query, build_priority_terms
 from snippet_extractor import extract_best_snippet, build_snippet_for_flash, build_snippet_for_display, format_source_label, text_layer_label
 from cross_volume_analysis import is_temporal_query, build_temporal_evidence
+from passage_index import search_passages
 
 _GLOSSARY = load_glossary()
 
@@ -54,7 +55,13 @@ def expand_query(question: str) -> str:
 def fts5_query(query: str) -> str:
     """多词 FTS5 用 OR 连接，过滤中文防 FTS5 报错"""
     import re
-    words = [w for w in query.split() if len(w) > 1 and re.match(r'^[a-zA-ZäöüßÄÖÜẞ]+$', w)]
+    operators = {'AND', 'OR', 'NOT', 'NEAR'}
+    words = [
+        w for w in query.split()
+        if len(w) > 1
+        and w.upper() not in operators
+        and re.match(r'^[a-zA-ZäöüßÄÖÜẞ]+$', w)
+    ]
     if not words:
         return query
     return " OR ".join(words) if words else query
@@ -139,15 +146,10 @@ def do_search(query: str, route: str = "all", top_k: int = 15, use_passage: bool
     layer_columns = _layer_select_sql(conn)
     fts_q = fts5_query(query)
 
-    # 检查 passage 是否可用
-    has_passage = False
-    try:
-        cnt = conn.execute("SELECT COUNT(*) FROM passages WHERE text != ''").fetchone()[0]
-        has_passage = cnt > 0 and use_passage
-    except:
-        pass
+    # search_passages() independently verifies FTS parity and the dirty flag.
+    has_passage = bool(use_passage)
 
-    # 统一使用 page-level chunks（passage 索引暂未生成时安全回退）
+    # Page-level retrieval remains the safe fallback.
     route_filter = ""
     if route == "main_text":
         route_filter = "AND c.is_main_text = 1"
@@ -155,29 +157,40 @@ def do_search(query: str, route: str = "all", top_k: int = 15, use_passage: bool
         route_filter = "AND c.is_editorial_comment = 1"
 
     bm25 = {}
-    try:
-        for row in conn.execute(f"""
-            SELECT c.id, c.source_path, c.mega_abteilung, c.band, c.source_type,
-                   c.page, c.is_main_text, c.chunk_text, rank,
-                   COALESCE(c.source_collection, 'ocr'), COALESCE(c.source_quality, 'ocr'),
-                   COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''), COALESCE(c.source_url, ''),
+    if has_passage:
+        try:
+            passage_rows = search_passages(
+                conn, fts_q, route=route, limit=max(40, top_k * 2)
+            )
+            bm25 = {row["id"]: row for row in passage_rows}
+        except sqlite3.Error:
+            bm25 = {}
+
+    if not bm25:
+        try:
+            for row in conn.execute(f"""
+                SELECT c.id, c.source_path, c.mega_abteilung, c.band, c.source_type,
+                       c.page, c.is_main_text, c.chunk_text, rank,
+                       COALESCE(c.source_collection, 'ocr'), COALESCE(c.source_quality, 'ocr'),
+                       COALESCE(c.page_kind, 'pdf'), COALESCE(c.page_label, ''), COALESCE(c.source_url, ''),
                        {layer_columns}
-            FROM chunks_fts f JOIN chunks c ON f.rowid = c.rowid
-            WHERE chunks_fts MATCH ? {route_filter}
-            ORDER BY rank LIMIT 30
-        """, (fts_q,)):
-            bm25[row[0]] = {
-                "id": row[0], "source_path": row[1], "abteilung": row[2],
-                "band": row[3], "type": row[4], "page": row[5],
-                "is_main_text": bool(row[6]), "text": row[7],
-                "rank": row[8], "_bm25_rank": row[8],
-                "source_collection": row[9], "source_quality": row[10],
-                "page_kind": row[11], "page_label": row[12], "source_url": row[13],
-                "text_layer": row[14], "text_layer_confidence": row[15],
-                "text_layer_provenance": row[16],
-            }
-    except Exception as e:
-        pass
+                FROM chunks_fts f JOIN chunks c ON f.rowid = c.rowid
+                WHERE chunks_fts MATCH ? {route_filter}
+                ORDER BY rank LIMIT 30
+            """, (fts_q,)):
+                bm25[row[0]] = {
+                    "id": row[0], "record_type": "page",
+                    "source_path": row[1], "abteilung": row[2],
+                    "band": row[3], "type": row[4], "page": row[5],
+                    "is_main_text": bool(row[6]), "text": row[7],
+                    "rank": row[8], "_bm25_rank": row[8],
+                    "source_collection": row[9], "source_quality": row[10],
+                    "page_kind": row[11], "page_label": row[12], "source_url": row[13],
+                    "text_layer": row[14], "text_layer_confidence": row[15],
+                    "text_layer_provenance": row[16],
+                }
+        except sqlite3.Error:
+            bm25 = {}
 
     vec = {}
     try:
@@ -223,12 +236,21 @@ def do_search(query: str, route: str = "all", top_k: int = 15, use_passage: bool
         except Exception:
             vec = {}
 
-    # RRF
+    # RRF. A page vector reinforces the best lexical passage on the same page.
     scores = {}
+    passage_by_page = {}
+    for rid, item in bm25.items():
+        if item.get("record_type") == "passage":
+            passage_by_page.setdefault(item.get("page_id"), rid)
     for rank, rid in enumerate(bm25):
         scores[rid] = scores.get(rid, 0) + 1/(60+rank+1)
     for rank, rid in enumerate(vec):
-        scores[rid] = scores.get(rid, 0) + 1/(60+rank+1)
+        target_id = passage_by_page.get(rid, rid)
+        scores[target_id] = scores.get(target_id, 0) + 1/(60+rank+1)
+        if target_id != rid:
+            sources = bm25[target_id].setdefault("_retrieval_sources", ["passage_fts"])
+            if "vector_page" not in sources:
+                sources.append("vector_page")
 
     merged = []
     for rid, score in sorted(scores.items(), key=lambda x:x[1], reverse=True)[:top_k]:
@@ -241,6 +263,33 @@ def do_search(query: str, route: str = "all", top_k: int = 15, use_passage: bool
 
     conn.close()
     return merged
+
+
+def merge_scoped_candidates(results: list, candidates: list) -> int:
+    """Merge page-level scoped recall into passage candidates without page duplicates."""
+    by_record = {item.get("id"): item for item in results if item.get("id")}
+    by_page = {}
+    for item in results:
+        page_key = item.get("page_id") or item.get("id")
+        if page_key:
+            by_page.setdefault(page_key, item)
+
+    injected = 0
+    for candidate in candidates:
+        candidate_id = candidate.get("id")
+        existing = by_page.get(candidate_id) or by_record.get(candidate_id)
+        if existing is not None:
+            sources = existing.setdefault("_retrieval_sources", [])
+            source = candidate.get("_retrieval_source", "scoped_target_volume")
+            if source not in sources:
+                sources.append(source)
+            continue
+        results.append(candidate)
+        if candidate_id:
+            by_record[candidate_id] = candidate
+            by_page[candidate_id] = candidate
+        injected += 1
+    return injected
 
 
 def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_pro: bool,
@@ -323,13 +372,8 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
             text_only=True,
             top_k=20)
         scoped_text_count = len(scoped_results)
-        # Inject target-volume candidates. Do not replace global retrieval.
-        existing_ids = {r.get('id', '') for r in results}
-        for sr in scoped_results:
-            if sr['id'] not in existing_ids:
-                results.append(sr)
-                existing_ids.add(sr['id'])
-                scoped_injected += 1
+        # Merge by parent page so a passage and its full page are not duplicated.
+        scoped_injected = merge_scoped_candidates(results, scoped_results)
 
         # If the target has authoritative digital text, inject a small parallel
         # candidate set. This prevents OCR-only global retrieval from hiding it.
@@ -341,11 +385,7 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
             top_k=12,
             source_collection='megadigital')
         authoritative_text_count = len(authoritative_results)
-        for ar in authoritative_results:
-            if ar['id'] not in existing_ids:
-                results.append(ar)
-                existing_ids.add(ar['id'])
-                authoritative_injected += 1
+        authoritative_injected = merge_scoped_candidates(results, authoritative_results)
         if scoped_injected > 0:
             progress(f"  🎯 目标卷召回注入: {scoped_injected} 条 ({scoped_text_count} scoped)")
         if authoritative_injected > 0:

@@ -16,11 +16,13 @@
 python build_index.py --build --no-embed
 python build_index.py --repair-vectors
 python build_index.py --vector-status
+python passage_index.py --status
+python test_passage_index.py
 python index_health.py
 python test_retrieval_regression.py
 ```
 
-修改 `glossary.yaml`、`query_analyzer.py`、`rerank.py`、`webui.py`、`text_layer.py`，或重建索引后，必须运行回归测试。运维和恢复步骤见 [docs/operations.md](docs/operations.md)。检索架构见 [docs/retrieval_architecture.md](docs/retrieval_architecture.md)，文献层级规则见 [docs/text_layer_classification.md](docs/text_layer_classification.md)。
+修改 `glossary.yaml`、`query_analyzer.py`、`rerank.py`、`webui.py`、`text_layer.py`，或重建索引后，必须运行回归测试。运维和恢复步骤见 [docs/operations.md](docs/operations.md)。检索架构见 [docs/retrieval_architecture.md](docs/retrieval_architecture.md)，文献层级规则见 [docs/text_layer_classification.md](docs/text_layer_classification.md)，passage 构建与恢复见 [docs/passage_index.md](docs/passage_index.md)。
 
 ## 数据边界
 
