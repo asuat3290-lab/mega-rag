@@ -26,16 +26,21 @@ critique philosophy theory concept history work text volume edition
 # ---- 意图分类规则 ----
 _AUTHOR_INTENT_PATTERNS = [
     '怎么讨论', '如何讨论', '如何论述', '怎么论述', '如何理解', '怎么理解',
-    '概念', '范畴', '论述', '讨论', '观点', '理论', '思想',
+    '是什么', '何谓', '含义', '关系', '如何展开', '如何形成', '怎么形成',
+    '如何发展', '怎么发展', '概念', '范畴', '论述', '讨论', '观点', '理论', '思想',
     'Begriff', 'discusses', 'discuss', 'critique', 'argument', 'passage',
-    'Kritik', 'Theorie', 'Auffassung', 'Darstellung',
+    'what is', 'was ist', 'Kritik', 'Theorie', 'Auffassung', 'Darstellung',
 ]
 
-_APPARAT_INTENT_PATTERNS = [
-    '编者注', '编者说明', 'Apparat', 'apparat', '异文', '版本', '手稿',
+_STRONG_APPARAT_INTENT_PATTERNS = [
+    '编者注', '编者说明', 'Apparat', 'apparat', '异文', '版本',
     '出处', '注释', '校勘', '考证', '编辑', '排印',
-    'variant', 'manuscript', 'editorial', 'apparatus', 'Handschrift',
-    'Entstehung', 'Überlieferung', 'Originalhandschrift',
+    'variant', 'editorial', 'apparatus', 'Entstehung', 'Überlieferung',
+    'Originalhandschrift',
+]
+
+_WEAK_APPARAT_INTENT_PATTERNS = [
+    '手稿', 'manuscript', 'Handschrift',
 ]
 
 # ---- 著作名 → (Abteilung, Band) ----
@@ -274,10 +279,18 @@ def _is_author_term(cn_term: str) -> bool:
 def _classify_intent(question: str) -> str:
     q_lower = question.lower()
     has_author = any(p.lower() in q_lower for p in _AUTHOR_INTENT_PATTERNS)
-    has_apparat = any(p.lower() in q_lower for p in _APPARAT_INTENT_PATTERNS)
-    # author_argument 优先：当同时命中时，"怎么讨论"比"手稿"更表达用户意图
+    has_strong_apparat = any(
+        p.lower() in q_lower for p in _STRONG_APPARAT_INTENT_PATTERNS
+    )
+    has_weak_apparat = any(
+        p.lower() in q_lower for p in _WEAK_APPARAT_INTENT_PATTERNS
+    )
+    # Explicit editorial/version language wins. A bare "manuscript" is usually
+    # a work-scope hint and must not override a conceptual question.
+    if has_strong_apparat:
+        return "apparat_question"
     if has_author:
         return "author_argument"
-    if has_apparat:
+    if has_weak_apparat:
         return "apparat_question"
     return "general_search"

@@ -1,40 +1,220 @@
-# MEGA² RAG 评估查询集
+# MEGA² RAG research-oriented retrieval benchmark.
+#
+# Each case describes evidence that is known to exist in the current corpus.
+# preferred_volumes are evaluation expectations, not hidden retrieval filters.
+# The retrieval pipeline must infer scope from the user's question itself.
+
+version: 2
+defaults:
+  pass_at: 10
+  must_hit_terms: true
+  must_hit_volume: false
+  must_hit_type: false
+
 queries:
-  - zh: "现实的人"
-    de_expected: ["wirkliche Individuen", "wirklichen Menschen", "wirklich thätigen Menschen"]
-    preferred_abteilung: "I"
-    preferred_band: "5"
+  - id: real_individuals_german_ideology
+    query: "德意志意识形态中马克思如何谈论现实的人"
+    category: work_concept
+    expected_terms: ["wirkliche Individuen", "wirklichen Menschen", "wirklich thätigen Menschen"]
+    preferred_volumes: [{abteilung: "I", band: "5"}]
     preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    pass_at: 5
+    notes: "Checks work scoping, Chinese-German expansion, and TEXT priority."
 
-  - zh: "共同体"
-    de_expected: ["Gemeinschaft", "Gemeinwesen", "Assoziation"]
-    preferred_abteilung: "I"
-    preferred_band: "5"
+  - id: community_german_ideology
+    query: "德意志意识形态中的共同体概念是什么"
+    category: work_concept
+    expected_terms: ["Gemeinschaft", "Gemeinwesen", "Assoziation"]
+    preferred_volumes: [{abteilung: "I", band: "5"}]
     preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    pass_at: 5
+    notes: "Regression for broad concept terms that also occur in many other volumes."
 
-  - zh: "阶级"
-    de_expected: ["Klasse", "Klassen", "Klassenkampf"]
-    preferred_abteilung: "I"
+  - id: ideology_german_ideology
+    query: "德意志意识形态中意识形态概念如何展开"
+    category: work_concept
+    expected_terms: ["Ideologie", "ideologisch", "Bewußtseinsformen"]
+    preferred_volumes: [{abteilung: "I", band: "5"}]
     preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    pass_at: 5
+    notes: "Tests whether dense APPARAT term frequency overwhelms target-volume TEXT."
 
-  - zh: "市民社会"
-    de_expected: ["bürgerliche Gesellschaft", "bürgerlichen Gesellschaft"]
-    preferred_abteilung: "I"
+  - id: division_of_labour_german_ideology
+    query: "德意志意识形态中分工如何发展"
+    category: work_concept
+    expected_terms: ["Theilung der Arbeit", "Arbeitstheilung"]
+    preferred_volumes: [{abteilung: "I", band: "5"}]
     preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    notes: "Checks historical spelling and multiword phrase retrieval."
 
-  - zh: "意识形态"
-    de_expected: ["Ideologie", "ideologisch", "Bewußtseinsformen"]
-    preferred_abteilung: "I"
-    preferred_band: "5"
+  - id: civil_society_hegel_critique
+    query: "黑格尔法哲学批判中市民社会与国家是什么关系"
+    category: work_concept
+    expected_terms: ["bürgerliche Gesellschaft", "bürgerlichen Gesellschaft"]
+    preferred_volumes: [{abteilung: "I", band: "2"}]
     preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    pass_at: 5
+    notes: "Checks a concept shared across works under an explicit work scope."
 
-  - zh: "异化劳动"
-    de_expected: ["entfremdete Arbeit", "Entfremdung", "Entäußerung"]
-    preferred_abteilung: "I"
-    preferred_band: "3"
+  - id: subsumption_hegel_critique_mixed
+    query: "黑格尔法哲学批判中马克思怎么讨论subsumption"
+    category: work_concept
+    expected_terms: ["Subsumtion", "subsumieren", "subsumiert"]
+    preferred_volumes: [{abteilung: "I", band: "2"}]
     preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    pass_at: 5
+    notes: "Existing regression: mixed Chinese-English concept query."
 
-  - zh: "剩余价值"
-    de_expected: ["Mehrwert", "Surpluswert", "surplus value"]
-    preferred_abteilung: "II"
+  - id: subsumption_hegel_critique_zh
+    query: "黑格尔法哲学批判中马克思怎么讨论归摄"
+    category: work_concept
+    expected_terms: ["Subsumtion", "subsumieren", "subsumiert"]
+    preferred_volumes: [{abteilung: "I", band: "2"}]
     preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    pass_at: 5
+    notes: "Existing regression: Chinese concept expansion."
+
+  - id: subsumption_hegel_critique_de
+    query: "Subsumtion Hegelschen Rechtsphilosophie"
+    category: german_exact
+    expected_terms: ["Subsumtion", "subsumieren", "subsumiert"]
+    preferred_volumes: [{abteilung: "I", band: "2"}]
+    preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    pass_at: 5
+    notes: "Pure German query must work without a glossary hit."
+
+  - id: alienated_labour_1844
+    query: "1844年经济学哲学手稿中异化劳动如何展开"
+    category: work_concept
+    expected_terms: ["Entfremdung", "entfremdete Arbeit", "Entäußerung"]
+    preferred_volumes: [{abteilung: "I", band: "2"}]
+    preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    pass_at: 5
+    notes: "Corrects the old erroneous I/3 expectation; the 1844 manuscripts are in I/2."
+
+  - id: alienation_grundrisse
+    query: "大纲中马克思如何讨论异化"
+    category: work_concept
+    expected_terms: ["Entfremdung", "Entäußerung", "entfremdet"]
+    preferred_volumes: [{abteilung: "II", band: "1"}]
+    preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    notes: "Cross-checks the same concept in a different work and Abteilung."
+
+  - id: general_labour_definition
+    query: "一般劳动是什么"
+    category: concept
+    expected_terms: ["allgemeine Arbeit", "allgemeinen Arbeit", "allgemeiner Arbeit", "abstrakte Arbeit"]
+    preferred_type: "TEXT"
+    must_hit_type: true
+    notes: "Previous Chinese zero-result query; no work scope should be invented."
+
+  - id: general_labour_history
+    query: "一般劳动这个概念是如何历史地形成的"
+    category: concept_history
+    expected_terms: ["allgemeine Arbeit", "allgemeinen Arbeit", "Arbeit überhaupt", "abstrakte Arbeit"]
+    preferred_type: "TEXT"
+    must_hit_type: true
+    notes: "Tests broad conceptual retrieval before cross-volume synthesis."
+
+  - id: surplus_value_theories
+    query: "剩余价值理论中马克思如何讨论剩余价值"
+    category: work_concept
+    expected_terms: ["Mehrwert", "Surpluswert"]
+    preferred_volumes: [{abteilung: "II", band: "3"}]
+    preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    pass_at: 5
+    notes: "High-frequency term that needs an explicit work scope."
+
+  - id: capital_subsumption
+    query: "资本论手稿中劳动对资本的归摄是什么"
+    category: work_concept
+    expected_terms: ["Subsumtion", "subsumieren", "subsumiert"]
+    preferred_volumes: [{abteilung: "II"}]
+    preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    notes: "Checks Abteilung-level scope without locking to one Band."
+
+  - id: commodity_form_capital
+    query: "资本论中商品形式是什么"
+    category: work_concept
+    expected_terms: ["Ware", "Waare", "Waarenform"]
+    preferred_volumes: [{abteilung: "II"}]
+    preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    notes: "Measures authoritative MEGAdigital visibility for a central Capital concept."
+
+  - id: credit_capital_german
+    query: "Kredit Credit Kapital Manuskript"
+    category: german_exact
+    expected_terms: ["Kredit", "Credit"]
+    preferred_volumes: [{abteilung: "II"}]
+    preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    notes: "Pure German economic query and lexical fallback."
+
+  - id: german_ideology_apparat
+    query: "德意志意识形态的编者注、异文和版本情况"
+    category: apparat
+    expected_terms: ["Variante", "Varianten", "Handschrift", "Entstehung"]
+    preferred_volumes: [{abteilung: "I", band: "5"}]
+    preferred_type: "APPARAT"
+    must_hit_volume: true
+    must_hit_type: true
+    notes: "APPARAT intent must not be forced behind TEXT."
+
+  - id: marx_finances_1856_1857
+    query: "从书信来看，1856-1857年马克思的经济状况如何"
+    category: letters_temporal
+    expected_terms: ["Pfund Sterling", "materielle Hilfe", "Einkünfte", "Geld"]
+    preferred_volumes:
+      - {abteilung: "III", band: "7"}
+      - {abteilung: "III", band: "8"}
+    preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    notes: "Known difficult cross-volume correspondence question."
+
+  - id: marx_finances_1861
+    query: "1861年马克思的经济状况与预支遗产"
+    category: letters_temporal
+    expected_terms: ["Vorschuß", "Erbe", "Misere", "Pfund Sterling"]
+    preferred_volumes: [{abteilung: "III", band: "11"}]
+    preferred_type: "APPARAT"
+    must_hit_volume: true
+    must_hit_type: true
+    notes: "Known evidence in III/11 APPARAT around the 1861 financial crisis."
+
+  - id: marx_finances_1857_de
+    query: "Marx Engels Pfund Sterling Einkünfte 1857"
+    category: german_exact
+    expected_terms: ["Pfund Sterling", "Einkünfte", "materielle Hilfe"]
+    preferred_volumes: [{abteilung: "III", band: "8"}]
+    preferred_type: "TEXT"
+    must_hit_volume: true
+    must_hit_type: true
+    notes: "German lexical control for the Chinese correspondence query."

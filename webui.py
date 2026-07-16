@@ -82,8 +82,6 @@ def do_scoped_search(query_terms: list, target_abt: str, target_band: str = None
     """Recall candidates within an explicit MEGA scope, optionally by source."""
     conn = sqlite3.connect(str(META_DB))
     layer_columns = _layer_select_sql(conn)
-    results = []
-    seen = set()
 
     conditions = ["c.mega_abteilung = ?"]
     params = [target_abt]
@@ -97,11 +95,29 @@ def do_scoped_search(query_terms: list, target_abt: str, target_band: str = None
         params.append(source_collection)
     where_base = " AND ".join(conditions)
 
+    # Collect a small bucket for every priority term, then merge round-robin.
+    # This prevents a broad first term (for example Kapital) from consuming the
+    # whole scoped pool before a narrower concept term is queried.
+    usable_terms = []
+    seen_terms = set()
     for term in query_terms[:15]:
-        if len(results) >= top_k:
-            break
-        if not term or len(term) < 2:
+        normalized = str(term or "").strip().casefold()
+        if len(normalized) < 2 or normalized in seen_terms:
             continue
+        seen_terms.add(normalized)
+        usable_terms.append(str(term).strip())
+    term_count = max(len(usable_terms), 1)
+    per_term_limit = max(
+        2,
+        min(6, (top_k + term_count - 1) // term_count + 1),
+    )
+    term_buckets = []
+    source_tag = (
+        "scoped_authoritative" if source_collection else "scoped_target_volume"
+    )
+
+    for term in usable_terms:
+        bucket = []
         try:
             for row in conn.execute(f"""
                 SELECT c.id, c.source_path, c.mega_abteilung, c.band, c.source_type,
@@ -112,13 +128,9 @@ def do_scoped_search(query_terms: list, target_abt: str, target_band: str = None
                 FROM chunks c
                 WHERE {where_base} AND c.chunk_text LIKE ?
                 ORDER BY c.char_count DESC LIMIT ?
-            """, tuple(params + ['%' + term + '%', top_k])):
+            """, tuple(params + ['%' + term + '%', max(6, per_term_limit * 3)])):
                 record_id = row[0]
-                if record_id in seen:
-                    continue
-                seen.add(record_id)
-                source_tag = "scoped_authoritative" if source_collection else "scoped_target_volume"
-                results.append({
+                bucket.append({
                     "id": record_id, "source_path": row[1], "abteilung": row[2],
                     "band": row[3], "type": row[4], "page": row[5],
                     "is_main_text": bool(row[6]), "text": row[7],
@@ -128,11 +140,35 @@ def do_scoped_search(query_terms: list, target_abt: str, target_band: str = None
                     "text_layer_provenance": row[16],
                     "rank": 99, "_bm25_rank": 99,
                     "_retrieval_source": source_tag, "_retrieval_sources": [source_tag],
+                    "_scoped_term": term,
                 })
-                if len(results) >= top_k:
+                if len(bucket) >= per_term_limit:
                     break
         except sqlite3.Error:
             continue
+        if bucket:
+            term_buckets.append(bucket)
+
+    results = []
+    seen = set()
+    positions = [0] * len(term_buckets)
+    while len(results) < top_k:
+        made_progress = False
+        for index, bucket in enumerate(term_buckets):
+            while positions[index] < len(bucket):
+                candidate = bucket[positions[index]]
+                positions[index] += 1
+                record_id = candidate.get("id")
+                if record_id in seen:
+                    continue
+                seen.add(record_id)
+                results.append(candidate)
+                made_progress = True
+                break
+            if len(results) >= top_k:
+                break
+        if not made_progress:
+            break
 
     conn.close()
     return results

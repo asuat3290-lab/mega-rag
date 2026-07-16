@@ -20,9 +20,12 @@ python passage_index.py --status
 python test_passage_index.py
 python index_health.py
 python test_retrieval_regression.py
+python eval_retrieval.py --modes page,passage,hybrid --top-k 10
 ```
 
-修改 `glossary.yaml`、`query_analyzer.py`、`rerank.py`、`webui.py`、`text_layer.py`，或重建索引后，必须运行回归测试。运维和恢复步骤见 [docs/operations.md](docs/operations.md)。检索架构见 [docs/retrieval_architecture.md](docs/retrieval_architecture.md)，文献层级规则见 [docs/text_layer_classification.md](docs/text_layer_classification.md)，passage 构建与恢复见 [docs/passage_index.md](docs/passage_index.md)。
+修改 `glossary.yaml`、`query_analyzer.py`、`rerank.py`、`webui.py`、`text_layer.py`，或重建索引后，必须运行回归测试。8 项快速算法回归使用 `test_retrieval_regression.py`；20 项论文研究型对照及防回退基线使用 `eval_retrieval.py --fail-on-regression`。运维和恢复步骤见 [docs/operations.md](docs/operations.md)。检索架构见 [docs/retrieval_architecture.md](docs/retrieval_architecture.md)，文献层级规则见 [docs/text_layer_classification.md](docs/text_layer_classification.md)，passage 构建与恢复见 [docs/passage_index.md](docs/passage_index.md)，研究评估方法见 [docs/research_evaluation.md](docs/research_evaluation.md)。
+
+当前 20 项基线中混合检索为 20/20，尚无证据表明需要为全部 11,647 条 MEGAdigital 记录补向量；保持 FTS 和目标卷权威文本注入即可，待出现可复现的语义召回缺口后再做选择性向量试验。
 
 ## 数据边界
 
