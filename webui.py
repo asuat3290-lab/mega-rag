@@ -593,6 +593,31 @@ def gradio_query(question, route, top_k, use_flash, use_pro, retrieval_mode, rer
         return f"❌ 错误: {e}\n{traceback.format_exc()}", "", "", ""
 
 
+def gradio_export(question, route, top_k, retrieval_mode, rerank_method):
+    """Create an API-free Markdown/JSON evidence package for local research."""
+    if not str(question or "").strip():
+        return "请输入研究问题", None, None
+    try:
+        from research_export import export_research_package
+
+        exported = export_research_package(
+            question,
+            route=route,
+            top_k=int(top_k),
+            retrieval_mode=retrieval_mode,
+            rerank_method=rerank_method,
+        )
+        package = exported["package"]
+        paths = exported["paths"]
+        status = (
+            f"已生成 {package['summary']['evidence_count']} 条证据，"
+            f"约 {package['summary']['rough_total_tokens']} tokens；未调用 DeepSeek API"
+        )
+        return status, paths.get("markdown"), paths.get("json")
+    except Exception as exc:
+        return f"导出失败: {type(exc).__name__}: {exc}", None, None
+
+
 def build_ui():
     import gradio as gr
 
@@ -630,8 +655,14 @@ def build_ui():
             use_pro = gr.Checkbox(label="🧠 Pro (学术分析)", value=True)
             use_timeline = gr.Checkbox(label="跨卷时间线（较慢）", value=False)
             submit_btn = gr.Button("检索", variant="primary", size="lg")
+            export_btn = gr.Button("导出研究包", variant="secondary", size="lg")
 
         status = gr.Textbox(label="执行状态", lines=3)
+
+        with gr.Row():
+            export_status = gr.Textbox(label="研究包状态", interactive=False)
+            export_markdown = gr.File(label="Markdown 研究包", interactive=False)
+            export_json = gr.File(label="JSON 研究包", interactive=False)
 
         with gr.Tabs():
             with gr.Tab("📋 证据卡片"):
@@ -645,6 +676,12 @@ def build_ui():
             fn=gradio_query,
             inputs=[question, route, top_k, use_flash, use_pro, retrieval_mode, rerank_method, use_cache, use_timeline],
             outputs=[status, raw_out, evidence_out, pro_out]
+        )
+
+        export_btn.click(
+            fn=gradio_export,
+            inputs=[question, route, top_k, retrieval_mode, rerank_method],
+            outputs=[export_status, export_markdown, export_json],
         )
 
     return app

@@ -31,7 +31,8 @@
   ├─[5] scoped retrieval injection ──────────────────
   │    仅当 target_volume EXISTS + intent == author_argument:
   │    do_scoped_search() → 目标卷内 LIKE 召回 (非 FTS5)
-  │    用 priority_terms[:10] 逐词 LIKE 搜索
+  │    用 priority_terms[:10] 建立逐词候选桶
+  │    round-robin 合并，避免宽泛词占满候选池
   │    → text_only TEXT 页面 → ID 去重注入 global pool
   │
   ├─[6] rerank ─────────────────────────────────────
@@ -54,6 +55,10 @@
   │    build_snippet_for_flash() → deepseek-chat 证据卡片
   │    _call_pro() → deepseek-reasoner 学术分析
   │    Gradio UI → 检索模式选择 / 重排 / 缓存
+  │
+  ├─[10] research export ────────────────────────────
+  │    research_export.py → 本地复用检索与 snippet
+  │    → Markdown / JSON 证据包（不调用 DeepSeek API）
   └──────────────────────────────────────────────────
 ```
 
@@ -86,6 +91,7 @@
 ### 5. scoped retrieval injection
 
 - `do_scoped_search()`: SQL LIKE（非 FTS5，避免 OCR 低质量页丢失）
+- 每个优先术语先建立小候选桶，再 round-robin 合并，避免 `Kapital` 等宽泛词挤掉核心概念
 - 仅当明确的 target_volume + author_argument 意图时激活
 - 注入去重后进入 global pool
 
@@ -106,6 +112,14 @@
 - `extract_best_snippet()` 返回结构化：`{snippet, preview, matched_term}`
 - preview 围绕 matched_term 居中 (50+150 字符)
 - Flash 使用完整 snippet
+
+### 9. research export
+
+- `research_export.py` 独立执行本地混合检索，不调用 Flash 或 Pro
+- 为每条结果生成稳定 `E###` 编号、来源水合、文本层级和检索 debug 信号
+- 区分 MEGAdigital 文本页、平台内部页序和 OCR PDF 物理页
+- 默认导出核心词附近的上下文，避免把整页文本重复发送给主模型
+- 详细格式和 Codex 使用方式见 [research_export.md](research_export.md)
 
 ## 文献层级元数据
 

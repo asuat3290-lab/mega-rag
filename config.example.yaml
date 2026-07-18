@@ -3,6 +3,9 @@ paths:
   metadata_db: "D:/mega_rag/metadata.db"
   vector_db: "D:/mega_rag/vectors.lancedb"
   cache_db: "D:/mega_rag/cache.db"
+  research_exports: "D:/mega_rag/research_exports"
+  research_library_db: "D:/mega_rag/research_library.db"
+  research_library_exports: "D:/mega_rag/research_library_exports"
 
 ollama:
   base_url: "http://localhost:11434"
