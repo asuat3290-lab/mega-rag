@@ -13,9 +13,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from glossary_loader import expand_with_glossary, load_glossary
 from query_analyzer import analyze_query, build_priority_terms
-from snippet_extractor import extract_best_snippet
+from snippet_extractor import extract_best_snippet, priority_terms_for_record
 from rerank import rerank
 from webui import do_search
+from concept_retrieval import search_core_variants, merge_core_candidates
+from concept_retrieval import annotate_concept_groups, apply_concept_group_coverage
 
 _GLOSSARY = load_glossary()
 with (Path(__file__).parent / "config.yaml").open(encoding="utf-8") as handle:
@@ -25,6 +27,7 @@ PASS, FAIL_ALG, XFAIL_DATA, SKIP = "PASS", "FAIL_ALGORITHM", "XFAIL_DATA", "SKIP
 
 
 def run_test(query: str, expected_terms_in_snippet: list = None,
+             expected_term_groups: list = None,
              expected_volume: tuple = None, expected_page_range: tuple = None,
              min_text_in_top: int = 1, description: str = "") -> dict:
     result = {
@@ -65,6 +68,18 @@ def run_test(query: str, expected_terms_in_snippet: list = None,
     search_pool = 50 if expected_volume else 30
     search_results = do_search(expanded, 'all', search_pool)
 
+    variant_route = (
+        "main_text" if profile.get("intent") == "author_argument" else "all"
+    )
+    variant_results = search_core_variants(
+        _META_DB, profile, priority, route=variant_route,
+        top_k=max(16, min(30, search_pool)),
+    )
+    variant_injected = merge_core_candidates(search_results, variant_results)
+    annotate_concept_groups(search_results, profile)
+    result["variant_found"] = len(variant_results)
+    result["variant_injected"] = variant_injected
+
     # Scoped injection (mirrors webui.py)
     if profile.get('target_abteilung') and profile.get('intent') == 'author_argument':
         from webui import do_scoped_search, merge_scoped_candidates
@@ -79,6 +94,7 @@ def run_test(query: str, expected_terms_in_snippet: list = None,
 
     reranked = rerank(search_results, query=expanded, mode="original_first",
                       method="rule", glossary_terms=matched, query_profile=profile)
+    reranked = apply_concept_group_coverage(reranked, profile)
     top10 = reranked[:10]
 
     result["top10"] = []
@@ -88,7 +104,7 @@ def run_test(query: str, expected_terms_in_snippet: list = None,
 
     for i, r in enumerate(top10):
         full_text = r.get('text', '')
-        extracted = extract_best_snippet(full_text, priority)
+        extracted = extract_best_snippet(full_text, priority_terms_for_record(r, priority))
         snippet = extracted['snippet']
         preview = extracted['preview']
         matched_term = extracted.get('matched_term','')
@@ -107,6 +123,7 @@ def run_test(query: str, expected_terms_in_snippet: list = None,
             "final_score": r.get('final_score', '?'),
             "snippet_has_core_expansion": has_expansion,
             "matched_term": matched_term,
+            "concept_groups": r.get("_matched_concept_groups", []),
             "snippet_preview": preview[:200],
             "debug": r.get('_debug', {}),
         }
@@ -157,6 +174,22 @@ def run_test(query: str, expected_terms_in_snippet: list = None,
                 result["status"] = FAIL_ALG
                 result["failures"].append(
                     f"期望术语 '{expected}' 未在任何 preview/matched_term 中找到")
+
+    for expected_group in expected_term_groups or []:
+        found_group = False
+        for entry in result["top10"]:
+            evidence = (
+                f"{entry.get('snippet_preview', '')} "
+                f"{entry.get('matched_term', '')}"
+            ).casefold()
+            if any(str(term).casefold() in evidence for term in expected_group):
+                found_group = True
+                break
+        if not found_group:
+            result["status"] = FAIL_ALG
+            result["failures"].append(
+                "词义组未进入 top10 证据: " + " / ".join(expected_group)
+            )
 
     if expected_volume and expected_page_range and target_evidence_rank is None:
         abt, band = expected_volume
@@ -278,6 +311,26 @@ def main():
             "min_text_in_top": 2,
             "description": "概念: 剩余价值 in 资本论手稿",
         },
+        {
+            "query": "马克思如何讨论利润率下降的",
+            "expected_term_groups": [[
+                "Fall der Profitrate", "tendenziellen Fall der Profitrate",
+                "Profitrate fällt",
+            ]],
+            "min_text_in_top": 2,
+            "description": "概念短语: 利润率下降",
+        },
+        {
+            "query": "马克思如何讨论贱民的",
+            "expected_term_groups": [
+                ["Pöbel", "Gesindel", "Canaille"],
+                ["Paria", "Parias"],
+                ["Lumpenproletariat", "Lumpenproletarier"],
+                ["Lazzaroni"],
+            ],
+            "min_text_in_top": 2,
+            "description": "多义概念: 贱民的词义组覆盖",
+        },
         # D. APPARAT 意图
         {
             "query": "德意志意识形态的编者注和异文说明",
@@ -312,6 +365,8 @@ def main():
               f"core={r['query_profile']['core_terms']} "
               f"target={r['query_profile']['target']}")
         print(f"   Priority (first 8): {r['priority_terms'][:8]}")
+        print(f"   Variant recall: found={r.get('variant_found', 0)} "
+              f"injected={r.get('variant_injected', 0)}")
         if r.get('target_page_rank'):
             print(f"   Target vol page rank: #{r['target_page_rank']}")
         if r.get('target_evidence_rank'):

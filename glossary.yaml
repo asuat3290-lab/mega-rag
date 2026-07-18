@@ -30,6 +30,47 @@ terms:
   商品: "Waare Ware Waarenform"
   货币: "Geld Geldform Gold Silber"
   利润: "Profit Profitrate Durchschnittsprofit"
+  利润率下降:
+    type: concept
+    priority: high
+    query_mode: [exact, semantic]
+    must_search_exact: true
+    de:
+      - "Fall der Profitrate"
+      - "tendenzieller Fall der Profitrate"
+      - "tendenziellen Fall der Profitrate"
+      - "Gesetz des tendenziellen Falls der Profitrate"
+      - "Tendenz der Profitrate zu fallen"
+      - "fallende Profitrate"
+      - "sinkende Profitrate"
+      - "Profitrate fällt"
+      - "Profitrate"
+  贱民:
+    type: concept
+    priority: high
+    query_mode: [exact, semantic]
+    must_search_exact: true
+    senses:
+      - id: poebel
+        label: "Pöbel／群氓、社会贱民"
+        de:
+          - "Pöbel"
+          - "Gesindel"
+          - "Canaille"
+      - id: paria
+        label: "Paria／被排斥的贱民"
+        de:
+          - "Paria"
+          - "Parias"
+      - id: lumpenproletariat
+        label: "Lumpenproletariat／流氓无产阶级"
+        de:
+          - "Lumpenproletariat"
+          - "Lumpenproletarier"
+      - id: lazzaroni
+        label: "Lazzaroni／拉扎罗尼"
+        de:
+          - "Lazzaroni"
   地租: "Grundrente Rente Differentialrente"
   工资: "Arbeitslohn Lohn Lohnarbeit"
   私有财产: "Privateigenthum Eigenthum Privateigentum"

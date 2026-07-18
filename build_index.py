@@ -281,10 +281,11 @@ def build_index(max_files=None, use_embedding=True):
             print("FTS5 状态未完成，正在补建...", flush=True)
             _rebuild_fts(conn)
             _set_index_state(conn, "chunks_fts_dirty", "0")
-            store_version("fts_rebuild_recovery")
         else:
             print("✅ 没有新文件需要索引", flush=True)
         conn.close()
+        version = store_version("page_index_noop_refresh")
+        print(f"索引版本已刷新: {version}", flush=True)
         return
 
     _set_index_state(conn, "chunks_fts_dirty", "1")

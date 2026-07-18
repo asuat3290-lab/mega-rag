@@ -23,6 +23,12 @@ CONFIG = yaml.safe_load((SCRIPT_DIR / "config.yaml").read_text(encoding="utf-8")
 META_DB = Path(CONFIG["paths"]["metadata_db"])
 EXPORT_SCHEMA_VERSION = "mega-research-package-v1"
 
+from concept_retrieval import (
+    annotate_concept_groups,
+    apply_concept_group_coverage,
+    merge_core_candidates,
+    search_core_variants,
+)
 from glossary_loader import expand_with_glossary, load_glossary
 from index_version import get_current_version
 from query_analyzer import analyze_query, build_priority_terms
@@ -87,9 +93,23 @@ def retrieve_research_evidence(
         max(search_top_k, 30),
         use_passage=True,
     )
+    variant_route = route
+    if route == "all" and profile.get("intent") == "author_argument":
+        variant_route = "main_text"
+    variant_candidates = search_core_variants(
+        META_DB,
+        profile,
+        prepared["priority_terms"],
+        route=variant_route,
+        top_k=max(16, min(30, top_k * 2)),
+    )
+    variant_injected = merge_core_candidates(results, variant_candidates)
+    annotate_concept_groups(results, profile)
 
     retrieval_debug = {
         "initial_candidates": len(results),
+        "variant_candidates": len(variant_candidates),
+        "variant_injected_count": variant_injected,
         "scoped_text_count": 0,
         "scoped_injected_count": 0,
         "authoritative_text_count": 0,
@@ -128,7 +148,9 @@ def retrieve_research_evidence(
         method=rerank_method,
         glossary_terms=prepared["matched_glossary_terms"],
         query_profile=profile,
-    )[:top_k]
+    )
+    results = apply_concept_group_coverage(results, profile)
+    results = results[:top_k]
     build_snippet_for_display(results, prepared["priority_terms"])
     _hydrate_source_metadata(results)
     retrieval_debug["final_results"] = len(results)

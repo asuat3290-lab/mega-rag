@@ -73,7 +73,30 @@ Why: 验证核心概念 + 宽泛作品范围 (无特定 Band)
 Failure: priority_terms 不含 Mehrwert → glossary expansion
 ```
 
-### 7. APPARAT 意图查询
+### 7. 利润率下降概念短语
+
+```
+Query: 马克思如何讨论利润率下降的
+Expected: top 10 至少包含 Fall der Profitrate / fallende Profitrate 等直接短语
+Why: 验证最长 glossary 匹配、短语保留和逐词形精确召回
+Failure:
+  - core 只剩“利润” → glossary 最长匹配失效
+  - 有 Profitrate 但无下降语义 → core-variant retrieval 未注入
+```
+
+### 8. 贱民多义概念
+
+```
+Query: 马克思如何讨论贱民的
+Expected: Pöbel、Paria、Lumpenproletariat、Lazzaroni 四组均进入 top 10
+Why: 验证非等价词义组覆盖、按实际召回词截取，以及 author_text 优先
+Failure:
+  - 某组完全缺失 → concept_retrieval round-robin 或 glossary senses
+  - snippet 围绕另一组 → priority_terms_for_record
+  - 他人书信压过已有作者原文 → author_text candidate preference
+```
+
+### 9. APPARAT 意图查询
 
 ```
 Query: 德意志意识形态的编者注和异文说明
@@ -82,7 +105,7 @@ Why: 验证 intent=apparat_question 时 APPARAT 不被过度压制
 Failure: TEXT 仍大面积压过 APPARAT → intent classifier 或 rerank weights
 ```
 
-### 8. 通用查询
+### 10. 通用查询
 
 ```
 Query: 马克思论国家
@@ -97,6 +120,7 @@ Failure: 结果过于集中单一卷 → balance 问题
 - 修改 `rerank.py` 后
 - 修改 `webui.py` 检索逻辑后
 - 修改 `query_analyzer.py` / `snippet_extractor.py` 后
+- 修改 `concept_retrieval.py` 或 glossary `senses` 后
 - 重建索引后
 
 ## 添加新测试
@@ -128,4 +152,4 @@ python test_passage_index.py
 - 所有合格页面均被覆盖且没有孤儿记录；
 - `Subsumtion AND Rechtsphilosophie` 能在 I/2 TEXT 中返回 passage 证据。
 
-修改 `passage_index.py`、`webui.py` 的融合逻辑、passage 配置或重建数据库后，必须同时运行 passage 测试和原有 8 项检索回归。
+修改 `passage_index.py`、`webui.py` 的融合逻辑、passage 配置或重建数据库后，必须同时运行 passage 测试和全部 10 项检索回归。

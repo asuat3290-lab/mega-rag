@@ -19,12 +19,13 @@ META_DB = CONFIG['paths']['metadata_db']
 from cache import make_cache_key, cache_get, cache_put, cache_status, clear_cache
 from index_version import get_current_version
 from rerank import rerank, MODE_WEIGHTS
-from glossary_loader import expand_with_glossary, load_glossary
+from glossary_loader import expand_with_glossary, load_glossary, needs_model_expansion, parse_model_expansion
 from ocr_quality import assess_quality
 from query_analyzer import analyze_query, build_priority_terms
 from snippet_extractor import extract_best_snippet, build_snippet_for_flash, build_snippet_for_display, format_source_label, text_layer_label
 from cross_volume_analysis import is_temporal_query, build_temporal_evidence
 from passage_index import search_passages
+from concept_retrieval import search_core_variants, merge_core_candidates, annotate_concept_groups, apply_concept_group_coverage
 
 _GLOSSARY = load_glossary()
 
@@ -336,12 +337,12 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
     idx_ver = get_current_version()
     cache_key = make_cache_key(
         question,
-        f"ui-v3|route={route}|mode={retrieval_mode}|rerank={rerank_method}|"
+        f"ui-v4|route={route}|mode={retrieval_mode}|rerank={rerank_method}|"
         f"flash={int(use_flash)}|pro={int(use_pro)}|timeline={int(use_timeline)}",
         top_k,
         rerank_method,
         idx_ver,
-        prompt_version="ui-v3",
+        prompt_version="ui-v4",
         model=f"{CONFIG['models']['flash']['model']}|{CONFIG['models']['pro']['model']}",
     )
     if use_cache:
@@ -355,12 +356,18 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
             except (TypeError, ValueError):
                 pass
 
-    # Step 0: 查询改写（术语表预填充 → deepseek-flash 生成关键词）
+    # Step 0: local concept clusters first; Flash only fills uncovered concepts.
     glossary_expanded, matched_terms, hints = expand_with_glossary(question, _GLOSSARY)
     glossary_hit = glossary_expanded != question
     expanded = glossary_expanded if glossary_hit else question
     import re
-    use_flash_expansion = not glossary_hit and not re.search(r"[A-Za-z\u00C0-\u024F]", question)
+    incomplete_expansion, uncovered = needs_model_expansion(
+        question, matched_terms, _GLOSSARY
+    )
+    use_flash_expansion = (
+        not re.search(r"[A-Za-z\u00C0-\u024F]", question)
+        and (not glossary_hit or incomplete_expansion)
+    )
     if use_flash_expansion:
         try:
             from openai import OpenAI
@@ -371,16 +378,20 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
             resp = client.chat.completions.create(
                 model=CONFIG['models']['flash']['model'],
                 messages=[{"role": "user", "content": (
-                    "Generate German MEGA retrieval terms only, separated by spaces. "
-                    "Include variants and historical spellings.\nQuestion: " + question
+                    "Return JSON only: {\"phrases\": [...], \"terms\": [...], "
+                    "\"senses\": [{\"label\": \"...\", \"terms\": [...]}]}. "
+                    "Generate concise German MEGA retrieval expressions, inflections, "
+                    "historical spellings, and distinct senses. Question: " + question
                 )}],
-                max_tokens=50,
+                max_tokens=160,
                 temperature=0.2,
             )
-            flash_terms = (resp.choices[0].message.content or "").strip()
-            if flash_terms:
-                expanded = f"{question} {flash_terms}"
-                progress("  Flash query expansion used.")
+            flash_items = parse_model_expansion(resp.choices[0].message.content or "")
+            if flash_items:
+                expanded = f"{expanded} {' '.join(flash_items)}"
+                progress(f"  Flash query expansion used ({len(flash_items)} terms).")
+            else:
+                progress("  Flash expansion returned no usable German terms; using local terms.")
         except Exception as exc:
             progress(f"  Flash expansion unavailable; using local terms ({str(exc)[:60]}).")
     else:
@@ -393,6 +404,22 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
     # Step 1: 检索（有明确卷册目标时扩大检索池 + 目标卷内单独召回）
     search_top_k = top_k * 3 if query_profile.get('target_abteilung') else top_k
     results = do_search(expanded, route, max(search_top_k, 30))
+
+    # Exact per-variant recall prevents broad OR terms from consuming the pool.
+    variant_route = route
+    if route == "all" and query_profile.get("intent") == "author_argument":
+        variant_route = "main_text"
+    variant_results = search_core_variants(
+        META_DB, query_profile, priority_terms, route=variant_route,
+        top_k=max(16, min(30, top_k * 2)),
+    )
+    variant_injected = merge_core_candidates(results, variant_results)
+    annotate_concept_groups(results, query_profile)
+    if variant_injected:
+        progress(
+            f"  🧭 核心词形召回注入: {variant_injected} 条 "
+            f"({len(variant_results)} exact candidates)"
+        )
 
     # 目标卷定向召回注入
     scoped_injected = 0
@@ -434,6 +461,7 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
     # Rerank (传入 query_profile 用于 intent/volume 加权)
     results = rerank(results, query=expanded, mode=retrieval_mode, method=rerank_method,
                      glossary_terms=matched_terms, query_profile=query_profile)
+    results = apply_concept_group_coverage(results, query_profile)
     results = results[:top_k]
     progress(f"  📊 重排完成 (mode={retrieval_mode}, intent={query_profile['intent']})")
 
@@ -448,6 +476,12 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
         src = format_source_label(r)
         ocr_q = r.get('ocr_quality', '?')
         ocr_warn = " ⚠️ OCR质量低" if ocr_q in ('low', 'failed') else ""
+        group_labels = [
+            group.get("label", "")
+            for group in r.get("_matched_concept_groups", [])
+            if group.get("label")
+        ]
+        group_note = f"\n词义组: {'；'.join(group_labels)}" if group_labels else ""
         dbg = r.get('_debug', {})
         scores = (f"final={r.get('final_score','-')} | "
                   f"rrf={dbg.get('rrf_base','-')} | "
@@ -458,7 +492,7 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
         # 优先使用 display_snippet，回退到原始 text 截断
         display_text = r.get('display_snippet', r.get('text', '')[:500])
         raw_output += f"""
-### [{i+1}] [{tag}] [文献层级: {layer}] {src}{ocr_warn}
+### [{i+1}] [{tag}] [文献层级: {layer}] {src}{ocr_warn}{group_note}
 {scores}
 {display_text}
 ---
@@ -498,7 +532,7 @@ def query_pipeline(question: str, route: str, top_k: int, use_flash: bool, use_p
 
     payload = {"raw": raw_output, "flash": flash_output, "pro": pro_output}
     if use_cache:
-        cache_put(cache_key, "ui_query", payload, idx_ver, "ui-v3")
+        cache_put(cache_key, "ui_query", payload, idx_ver, "ui-v4")
     return raw_output, flash_output, pro_output
 
 
@@ -526,6 +560,7 @@ def _call_flash(question, results, priority_terms=None):
 [证据 N] 来源: ... 层级: ... 德语原文关键句: ... 中文直译: ... 相关性: ...
 
 层级字段由本地分类器给定，不得自行改写：只有“作者原文（结构化文本）”可自动认定为马克思/恩格斯原文；“Textband 未分类”必须说明尚未自动判定，不能仅因位于 TEXT 卷就称为作者原文。
+如材料标有“检索词义组”，必须分别说明各组含义，不得把 Pöbel、Paria、Lumpenproletariat 等不同范畴直接视为同义词。
 诚实判断：如不相关，说明"当前索引中未找到直接相关段落"
 
 {chr(10).join(items)}"""

@@ -120,6 +120,23 @@ def _count_term_hits(text_lower: str, center: int, terms: List[str]) -> int:
     window = text_lower[max(0, center - 100):min(len(text_lower), center + 100)]
     return sum(1 for t in terms if t and t.lower() in window)
 
+def priority_terms_for_record(record: Dict, priority_terms: List[str]) -> List[str]:
+    """Prefer the exact variant that recalled this record, then global terms."""
+    ordered = []
+    seen = set()
+    candidates = list(record.get("_matched_variants", []))
+    for group in record.get("_matched_concept_groups", []):
+        candidates.extend(group.get("terms", []))
+    candidates.extend(priority_terms)
+    for value in candidates:
+        term = str(value or "").strip()
+        key = term.casefold()
+        if term and key not in seen:
+            seen.add(key)
+            ordered.append(term)
+    return ordered
+
+
 
 def build_snippet_for_flash(results: List[Dict],
                              priority_terms: List[str],
@@ -130,10 +147,16 @@ def build_snippet_for_flash(results: List[Dict],
         legacy_tag = "TEXT卷" if r.get('is_main_text') else "APPARAT卷"
         layer = text_layer_label(r)
         src = format_source_label(r)
+        group_labels = [
+            group.get("label", "")
+            for group in r.get("_matched_concept_groups", [])
+            if group.get("label")
+        ]
+        group_tag = f" [检索词义组: {'；'.join(group_labels)}]" if group_labels else ""
 
         full_text = r.get('text', '')
-        extracted = extract_best_snippet(full_text, priority_terms)
-        items.append(f"[{i+1}] {src} [{legacy_tag}] [文献层级: {layer}]\n{extracted['snippet']}")
+        extracted = extract_best_snippet(full_text, priority_terms_for_record(r, priority_terms))
+        items.append(f"[{i+1}] {src} [{legacy_tag}] [文献层级: {layer}]{group_tag}\n{extracted['snippet']}")
     return items
 
 
@@ -142,7 +165,7 @@ def build_snippet_for_display(results: List[Dict],
     """原地修改 results，添加 display_snippet / preview / matched_term"""
     for r in results:
         full_text = r.get('text', '')
-        extracted = extract_best_snippet(full_text, priority_terms)
+        extracted = extract_best_snippet(full_text, priority_terms_for_record(r, priority_terms))
         r['display_snippet'] = extracted['snippet']
         r['display_preview'] = extracted['preview']
         r['matched_term'] = extracted['matched_term']

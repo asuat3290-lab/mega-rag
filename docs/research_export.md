@@ -2,6 +2,8 @@
 
 `research_export.py` 将本地检索结果导出为 Markdown 和 JSON，供 Codex、论文写作流程或人工文献核查继续使用。导出阶段只调用 SQLite FTS5、LanceDB 和本地 Ollama `bge-m3`，不会调用 DeepSeek Flash 或 Pro。
 
+导出端与 Web UI 共用全局混合召回、核心词形逐项召回、目标卷注入、规则重排、词义组覆盖和记录级 snippet。它不会因为跳过 Flash / Pro 而退回旧候选池；不同 `senses` 仍会保留检索来源与分组标记。
+
 ## 使用方式
 
 ### Web UI

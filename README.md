@@ -28,7 +28,9 @@ python evidence_library.py import research_exports
 python test_evidence_library.py
 ```
 
-修改 `glossary.yaml`、`query_analyzer.py`、`rerank.py`、`webui.py`、`text_layer.py`，或重建索引后，必须运行回归测试。8 项快速算法回归使用 `test_retrieval_regression.py`；20 项论文研究型对照及防回退基线使用 `eval_retrieval.py --fail-on-regression`。运维和恢复步骤见 [docs/operations.md](docs/operations.md)。检索架构见 [docs/retrieval_architecture.md](docs/retrieval_architecture.md)，文献层级规则见 [docs/text_layer_classification.md](docs/text_layer_classification.md)，passage 构建与恢复见 [docs/passage_index.md](docs/passage_index.md)，研究评估方法见 [docs/research_evaluation.md](docs/research_evaluation.md)，Codex/论文研究包见 [docs/research_export.md](docs/research_export.md)。
+完整的非技术使用方法、系统架构、实现文件、成本控制和故障处理见 [docs/product_guide.md](docs/product_guide.md)。
+
+修改 `glossary.yaml`、`query_analyzer.py`、`concept_retrieval.py`、`rerank.py`、`webui.py`、`text_layer.py`，或重建索引后，必须运行回归测试。10 项快速算法回归使用 `test_retrieval_regression.py`；20 项论文研究型对照及防回退基线使用 `eval_retrieval.py --fail-on-regression`。运维和恢复步骤见 [docs/operations.md](docs/operations.md)。检索架构见 [docs/retrieval_architecture.md](docs/retrieval_architecture.md)，文献层级规则见 [docs/text_layer_classification.md](docs/text_layer_classification.md)，passage 构建与恢复见 [docs/passage_index.md](docs/passage_index.md)，研究评估方法见 [docs/research_evaluation.md](docs/research_evaluation.md)，Codex/论文研究包见 [docs/research_export.md](docs/research_export.md)。
 
 研究包的长期积累、人工审核和论文/Codex 导出见 [docs/evidence_library.md](docs/evidence_library.md)。
 

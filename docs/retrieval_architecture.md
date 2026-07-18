@@ -28,35 +28,44 @@
   │    do_search() → BM25 (SQLite FTS5) + Embedding (bge-m3, Ollama)
   │    → RRF 融合 → top_k × 3 candidate pool
   │
-  ├─[5] scoped retrieval injection ──────────────────
+  ├─[5] core-variant retrieval injection ────────────
+  │    concept_retrieval.py → 核心短语和词形逐项精确 passage FTS
+  │    小候选桶 round-robin 注入，避免宽泛 OR 词占满候选池
+  │    作者论述型查询优先已验证 author_text
+  │
+  ├─[6] scoped retrieval injection ──────────────────
   │    仅当 target_volume EXISTS + intent == author_argument:
   │    do_scoped_search() → 目标卷内 LIKE 召回 (非 FTS5)
   │    用 priority_terms[:10] 建立逐词候选桶
   │    round-robin 合并，避免宽泛词占满候选池
   │    → text_only TEXT 页面 → ID 去重注入 global pool
   │
-  ├─[6] rerank ─────────────────────────────────────
+  ├─[7] rerank ─────────────────────────────────────
   │    rerank.py rerank_rule():
   │      RRF 基础分 (50%) + 精确命中 + glossary 命中
   │      + TEXT/APPARAT type boost + intent boost
   │      + volume boost (温和) - noise penalty
   │      → unified score (越高越相关)
   │
-  ├─[7] scope_constrained_rerank ────────────────────
+  ├─[8] scope_constrained_rerank ────────────────────
   │    仅当 in_scope_text >= 3:
   │    in_scope_text → in_scope_apparat → out_scope_text → out_scope_apparat
   │    不硬过滤，仅重排优先级
   │
-  ├─[8] snippet_extractor ──────────────────────────
+  ├─[9] concept-group coverage ─────────────────────
+  │    为 glossary 声明的非等价 senses 各保留代表候选
+  │    优先直接词形召回和已验证作者原文
+  │
+  ├─[10] snippet_extractor ─────────────────────────
   │    extract_best_snippet() → 围绕 priority_terms 上下文
   │    返回 {snippet, preview (围绕 matched_term), matched_term}
   │
-  ├─[9] Flash / Pro / Web UI ────────────────────────
+  ├─[11] Flash / Pro / Web UI ───────────────────────
   │    build_snippet_for_flash() → deepseek-chat 证据卡片
   │    _call_pro() → deepseek-reasoner 学术分析
   │    Gradio UI → 检索模式选择 / 重排 / 缓存
   │
-  ├─[10] research export ────────────────────────────
+  ├─[12] research export ────────────────────────────
   │    research_export.py → 本地复用检索与 snippet
   │    → Markdown / JSON 证据包（不调用 DeepSeek API）
   └──────────────────────────────────────────────────
@@ -68,8 +77,10 @@
 
 - `glossary_loader.py` 加载 `glossary.yaml`
 - 兼容旧格式 (`subsumption: "Subsumtion subsumieren..."`) 和新格式 (`{de: [...], type: concept}`)
+- 重叠词条采用最长匹配，例如 `利润率下降` 优先于 `利润`
+- 新格式可声明 `senses`，用于保留多义概念的非等价德语词组
 - `expand_with_glossary()` 返回 `(expanded_query, matched_terms, hints)`
-- 未命中时 `extract_lexical_terms()` 从查询提取德语词
+- 局部命中但仍有未覆盖中文概念时，才调用 Flash 补全；响应使用 JSON 解析并过滤无效文本
 
 ### 2. query_profile
 
@@ -87,6 +98,13 @@
 - BM25: SQLite FTS5 + `fts5_or()` 过滤中文
 - Embedding: bge-m3 via Ollama → LanceDB
 - RRF: k=60 融合
+
+### 4b. core-variant retrieval injection
+
+- `search_core_variants()` 对核心短语和词形逐项执行精确 passage FTS
+- 每个词形只取小候选桶，再 round-robin 注入全局池，不改变原 BM25 / embedding 分数
+- 作者论述型查询优先 `text_layer=author_text` 的 MEGAdigital 文本
+- 合并时保留 `_matched_variants` 与 `_retrieval_sources`
 
 ### 5. scoped retrieval injection
 
@@ -107,10 +125,17 @@
 - `in_scope_text >= 3` 时激活
 - 不硬过滤 out_scope 结果
 
+### 7b. concept-group coverage
+
+- 对 glossary 声明的非等价 `senses` 各保留一条候选
+- 优先“该词义直接召回 + 已验证 author_text”
+- 不把 Pöbel、Paria、Lumpenproletariat 等不同范畴视为同义词
+
 ### 8. snippet_extractor
 
 - `extract_best_snippet()` 返回结构化：`{snippet, preview, matched_term}`
 - preview 围绕 matched_term 居中 (50+150 字符)
+- 每条记录先使用其 `_matched_variants` 截取，避免页面相关但片段围绕泛词
 - Flash 使用完整 snippet
 
 ### 9. research export
