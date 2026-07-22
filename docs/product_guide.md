@@ -1,6 +1,6 @@
 # MEGA² 文献研究工作台：产品说明与使用手册
 
-版本日期：2026-07-18  
+版本日期：2026-07-20
 项目位置：`D:\mega_rag`
 
 ## 1. 产品定位
@@ -53,7 +53,8 @@ http://127.0.0.1:7860
 工作台包含两部分：
 
 1. MEGA² 文献检索、证据卡片、学术分析和研究包导出；
-2. 论文证据库的导入、人工审核、标签管理和证据集导出。
+2. 观点核验：把研究判断拆成原子主张，检索支持、限定和反向证据；
+3. 论文证据库的导入、人工审核、标签管理和证据集导出。
 
 没有 `DEEPSEEK_API_KEY` 时，本地检索、原始结果、研究包和证据库仍可使用。需要 Flash 证据卡片或 Pro 学术分析时，再设置用户环境变量并重新启动：
 
@@ -220,8 +221,14 @@ flowchart TD
 | `snippet_extractor.py` | snippet、preview 和命中词定位 |
 | `webui.py` | Gradio 检索、Flash / Pro、缓存和研究包按钮 |
 | `research_export.py` | 无 DeepSeek 的 Markdown / JSON 研究包导出 |
+| `claim_audit.py` | 原子主张拆分、证据关系校准和观点核验报告 |
+| `claim_schema.py` | 稳定结论标签、证据关系和三档资源预算 |
+| `model_gateway.py` | 严格 JSON 解析、一次修复和 API token 统计 |
+| `agent_service.py` | 检索、核验、证据展开和状态的统一服务层 |
+| `mega_agent.py` | 供 Codex、OpenCode 和脚本使用的 JSON-only CLI |
+| `claim_audit_ui.py` | 观点核验工作台页面 |
 | `evidence_library.py` | 持久证据库、审核历史和论文证据集导出 |
-| `research_workbench.py` | 将检索 UI 与论文证据库组合为一个窗口 |
+| `research_workbench.py` | 将检索、观点核验与论文证据库组合为一个窗口 |
 
 OCR 主程序位于：
 
@@ -357,6 +364,29 @@ python build_index.py --build --no-embed
 4. 输出围绕实际核心词的德语证据，而不是只显示作品名或作者名附近片段；
 5. 用低成本 Flash 生成证据卡片，再由 Pro 进行受证据约束的综合；
 6. 无 API 地导出研究包，并在人工审核后形成可供 Codex 补写论文的证据集；
-7. 通过版本、缓存、debug 信号和回归测试降低后续修改造成的检索退化。
+7. 通过版本、缓存、debug 信号和回归测试降低后续修改造成的检索退化；
+8. 把用户观点拆成可检验主张，分别寻找支持、限定和反向证据；
+9. 让外部 Agent 先读取短证据索引，再按 E### 展开少量原文，从而控制 token。
 
 它仍不是自动完成文献考证的替代品。正式论文中的引文、页码、作者归属和概念同一性必须经过人工核验。
+
+## 15. 观点核验与 Agent 调用
+
+工作台中的“观点核验”默认使用 `brief` 预算和 Flash，Pro 默认关闭。零 API 模式和机器接口：
+
+```powershell
+cd D:\mega_rag
+python mega_agent.py search "你的研究问题" --detail index --save
+python mega_agent.py verify "你的观点" --budget brief
+python mega_agent.py verify "你的观点" --local-only
+```
+
+结论会区分强支持、部分支持、需要限定、缺乏支持、存在反证和证据不足。编者材料不能自动证明作者观点，未验证 Textband 不能产生强支持。完整原理与使用见 `docs/claim_audit.md`，外部 Agent 协议和可选 MCP 见 `docs/agent_integration.md`。
+
+## 研究型检索的证据边界
+
+新版工作台在回答前返回 `retrieval_adequacy`、`candidate_class` 和 `evidence_eligible`，用于区分直接正文证据、结构性语境、相关但不等同的概念、编者/索引材料和只有泛词命中的页面。
+
+对于“主要、总是、仅仅、从未”等强命题，普通 top-k 结果只能提供局部证据，不能证明全语料分布。系统会标记 `partially_answerable`，并建议做词频、对照概念和负样本抽查。
+
+外部 Agent 的推荐方式是：先 `plan`，必要时补充 refinement，再 `search(detail=index)`，最后只展开少量选中的 `E###`。参见 `agent_query_plan.md`。

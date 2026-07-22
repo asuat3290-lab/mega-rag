@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the MEGA retrieval UI with the persistent evidence-library workbench."""
+"""Launch the MEGA retrieval UI with research and evidence workbenches."""
 
 from __future__ import annotations
 
@@ -8,12 +8,14 @@ import sys
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from claim_audit_ui import attach_claim_audit
 from evidence_library_ui import attach_evidence_library
 from webui import CONFIG, build_ui, resolve_api_key
 
 
 def build_workbench():
     app = build_ui()
+    app = attach_claim_audit(app)
     return attach_evidence_library(app)
 
 

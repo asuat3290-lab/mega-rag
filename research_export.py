@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -32,7 +33,10 @@ from concept_retrieval import (
 from glossary_loader import expand_with_glossary, load_glossary
 from index_version import get_current_version
 from query_analyzer import analyze_query, build_priority_terms
+from query_plan import build_query_plan
 from rerank import rerank
+from retrieval_quality import apply_candidate_qualification, assess_retrieval_adequacy
+from sachregister import resolve_register_targets, search_sachregister
 from snippet_extractor import (
     build_snippet_for_display,
     format_source_label,
@@ -40,6 +44,7 @@ from snippet_extractor import (
     text_layer_label,
 )
 from webui import do_scoped_search, do_search, merge_scoped_candidates
+from term_probe import probe_query_plan
 
 
 def _now_iso() -> str:
@@ -56,10 +61,66 @@ def _query_hash(question: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def _prepare_query(question: str, glossary: dict) -> dict:
+def _dedupe_terms(values: list[str]) -> list[str]:
+    output = []
+    seen = set()
+    for value in values:
+        text = str(value or "").strip()
+        key = text.casefold()
+        if len(text) > 1 and key not in seen:
+            seen.add(key)
+            output.append(text)
+    return output
+
+
+def _prepare_query(question: str, glossary: dict, intent_override: str = None,
+                   planner_mode: str = "local",
+                   plan_refinement: dict | None = None) -> dict:
+    if planner_mode not in {"local", "hybrid", "agent_supplied"}:
+        raise ValueError(f"unsupported planner_mode: {planner_mode}")
+    if planner_mode == "agent_supplied" and not plan_refinement:
+        raise ValueError("agent_supplied planner mode requires plan_refinement")
+    local_plan = build_query_plan(
+        question, glossary=glossary, intent_override=intent_override
+    )
+    planner_diagnostics = {
+        "mode": planner_mode, "model": None,
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "fallback": False,
+    }
+    if planner_mode == "hybrid":
+        from query_plan_model import build_hybrid_plan
+        plan, planner_diagnostics = build_hybrid_plan(
+            question, local_plan=local_plan
+        )
+    elif planner_mode == "agent_supplied":
+        plan = build_query_plan(
+            question, glossary=glossary, intent_override=intent_override,
+            mode=planner_mode, refinement=plan_refinement,
+        )
+    else:
+        plan = local_plan
     expanded, matched_terms, hints = expand_with_glossary(question, glossary)
-    profile = analyze_query(question, expanded, matched_terms, glossary)
-    priority_terms = build_priority_terms(profile, glossary)
+    profile = copy.deepcopy(plan["base_query_profile"])
+    profile["intent"] = plan["routing_intent"]
+    profile["core_expansions"] = _dedupe_terms(
+        profile.get("core_expansions", [])
+        + plan["core_terms"] + plan["historical_variants"]
+    )
+    profile["lexical_core"] = _dedupe_terms(
+        profile.get("lexical_core", []) + plan["core_terms"]
+    )
+    planned_query_terms = _dedupe_terms(
+        plan["core_terms"] + plan["historical_variants"] + plan["supporting_terms"]
+    )
+    if planned_query_terms:
+        expanded = question + " " + " ".join(planned_query_terms)
+    legacy_priority = build_priority_terms(profile, glossary)
+    priority_terms = _dedupe_terms(
+        plan["core_terms"] + plan["historical_variants"]
+        + plan["supporting_terms"] + plan["related_non_equivalent"]
+        + legacy_priority
+    )
     return {
         "question": question,
         "expanded_query": expanded,
@@ -67,7 +128,80 @@ def _prepare_query(question: str, glossary: dict) -> dict:
         "glossary_hints": hints,
         "query_profile": profile,
         "priority_terms": priority_terms,
+        "query_plan": plan,
+        "planner_diagnostics": planner_diagnostics,
     }
+
+
+def _retag_candidates(candidates: list[dict], source: str) -> None:
+    for candidate in candidates:
+        candidate["_retrieval_source"] = source
+        sources = candidate.setdefault("_retrieval_sources", [])
+        if source not in sources:
+            sources.append(source)
+
+
+def _inject_planned_branches(results: list[dict], plan: dict, profile: dict,
+                             route: str, top_k: int) -> dict:
+    debug = {
+        "planned_scope_candidates": 0,
+        "planned_scope_injected": 0,
+        "related_candidates": 0,
+        "related_injected": 0,
+        "structural_candidates": 0,
+        "structural_injected": 0,
+    }
+    exact_terms = _dedupe_terms(
+        plan.get("core_terms", []) + plan.get("historical_variants", [])
+    )
+    text_route = "main_text" if plan.get("routing_intent") == "author_argument" else route
+
+    related = plan.get("related_non_equivalent", [])
+    if related:
+        related_profile = {
+            "core_expansions": related,
+            "lexical_core": [],
+            "core_terms": related,
+            "intent": profile.get("intent"),
+        }
+        candidates = search_core_variants(
+            META_DB, related_profile, related, route="all", top_k=max(8, top_k)
+        )
+        _retag_candidates(candidates, "planned_related_non_equivalent")
+        debug["related_candidates"] = len(candidates)
+        debug["related_injected"] = merge_core_candidates(results, candidates)
+
+    supporting = plan.get("supporting_terms", [])
+    if supporting:
+        structural_profile = {
+            "core_expansions": supporting,
+            "lexical_core": [],
+            "core_terms": supporting,
+            "intent": profile.get("intent"),
+        }
+        candidates = search_core_variants(
+            META_DB, structural_profile, supporting,
+            route=text_route, top_k=max(10, top_k)
+        )
+        _retag_candidates(candidates, "planned_structural")
+        debug["structural_candidates"] = len(candidates)
+        debug["structural_injected"] = merge_core_candidates(results, candidates)
+
+    if exact_terms:
+        for volume in plan.get("target_volumes", [])[:12]:
+            if not volume.get("abteilung"):
+                continue
+            candidates = do_scoped_search(
+                exact_terms,
+                target_abt=volume["abteilung"],
+                target_band=volume.get("band"),
+                text_only=plan.get("routing_intent") == "author_argument",
+                top_k=max(6, min(12, top_k)),
+            )
+            _retag_candidates(candidates, "planned_target_scope")
+            debug["planned_scope_candidates"] += len(candidates)
+            debug["planned_scope_injected"] += merge_scoped_candidates(results, candidates)
+    return debug
 
 
 def retrieve_research_evidence(
@@ -76,6 +210,9 @@ def retrieve_research_evidence(
     top_k: int = 12,
     retrieval_mode: str = "balanced",
     rerank_method: str = "rule",
+    intent_override: str = None,
+    planner_mode: str = "local",
+    plan_refinement: dict | None = None,
 ) -> dict:
     """Run the local retrieval pipeline without calling Flash or Pro."""
     if not str(question or "").strip():
@@ -84,8 +221,12 @@ def retrieve_research_evidence(
         raise ValueError("top_k must be positive")
 
     glossary = load_glossary()
-    prepared = _prepare_query(question.strip(), glossary)
+    prepared = _prepare_query(
+        question.strip(), glossary, intent_override=intent_override,
+        planner_mode=planner_mode, plan_refinement=plan_refinement,
+    )
     profile = prepared["query_profile"]
+    plan = prepared["query_plan"]
     search_top_k = top_k * 3 if profile.get("target_abteilung") else top_k
     results = do_search(
         prepared["expanded_query"],
@@ -114,6 +255,9 @@ def retrieve_research_evidence(
         "scoped_injected_count": 0,
         "authoritative_text_count": 0,
         "authoritative_injected_count": 0,
+        "planner_version": plan["planner_version"],
+        "matched_rule_ids": plan["matched_rule_ids"],
+        "planner_diagnostics": prepared.get("planner_diagnostics", {}),
     }
     if profile.get("target_abteilung") and profile.get("intent") == "author_argument":
         scoped_terms = [term for term in prepared["priority_terms"][:10] if len(term) > 2]
@@ -141,6 +285,45 @@ def retrieve_research_evidence(
             results, authoritative
         )
 
+    retrieval_debug.update(
+        _inject_planned_branches(results, plan, profile, route, top_k)
+    )
+    register_terms = _dedupe_terms(
+        plan.get("core_terms", []) + plan.get("historical_variants", [])
+        + plan.get("related_non_equivalent", [])
+    )[:15]
+    try:
+        register_payload = search_sachregister(
+            register_terms, top_k=12,
+            target_volumes=plan.get("target_volumes", []),
+        )
+    except Exception as exc:
+        register_payload = {"hits": [], "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        register_candidates = resolve_register_targets(
+            register_payload.get("hits", []), metadata_db=META_DB,
+            text_only=plan.get("routing_intent") == "author_argument",
+            top_k=max(12, top_k * 2),
+        )
+        _retag_candidates(register_candidates, "sachregister_resolved")
+        retrieval_debug["register_resolved_candidates"] = len(register_candidates)
+        retrieval_debug["register_resolved_injected"] = merge_scoped_candidates(
+            results, register_candidates
+        )
+    except Exception as exc:
+        retrieval_debug["register_resolved_candidates"] = 0
+        retrieval_debug["register_resolved_injected"] = 0
+        retrieval_debug["register_resolution_error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        term_probe_payload = probe_query_plan(plan, sample_limit=0)
+    except Exception as exc:
+        term_probe_payload = {
+            "terms": [], "summary": {},
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    retrieval_debug["register_navigation_hits"] = len(register_payload.get("hits", []))
+    retrieval_debug["term_probe_summary"] = term_probe_payload.get("summary", {})
+
     results = rerank(
         results,
         query=prepared["expanded_query"],
@@ -150,10 +333,16 @@ def retrieve_research_evidence(
         query_profile=profile,
     )
     results = apply_concept_group_coverage(results, profile)
+    results = apply_candidate_qualification(results, plan)
     results = results[:top_k]
     build_snippet_for_display(results, prepared["priority_terms"])
     _hydrate_source_metadata(results)
     retrieval_debug["final_results"] = len(results)
+    retrieval_debug["adequacy"] = assess_retrieval_adequacy(
+        results, plan,
+        term_probe=term_probe_payload,
+        register_hits=register_payload.get("hits", []),
+    )
     if results:
         scope_debug = results[0].get("_scope_debug", {})
         retrieval_debug["scope_constrained_applied"] = bool(
@@ -168,6 +357,18 @@ def retrieve_research_evidence(
             "retrieval_mode": retrieval_mode,
             "rerank_method": rerank_method,
             "debug": retrieval_debug,
+            "navigation": {
+                "sachregister": register_payload.get("hits", []),
+                "evidence_eligible": False,
+            },
+            "term_probe": {
+                "summary": term_probe_payload.get("summary", {}),
+                "terms": [
+                    {key: item.get(key) for key in
+                     ("term", "total_pages", "text_pages", "apparat_pages")}
+                    for item in term_probe_payload.get("terms", [])
+                ],
+            },
         },
         "results": results,
     }
@@ -350,6 +551,8 @@ def serialize_evidence(
             "text_layer_confidence": record.get("text_layer_confidence"),
             "text_layer_provenance": record.get("text_layer_provenance"),
             "verified_author_text": is_verified_author_text(record),
+            "evidence_eligible": bool(record.get("evidence_eligible", False)),
+            "candidate_class": record.get("_qualification", {}).get("candidate_class"),
             "reliability_class": _reliability_class(record),
             "ocr_quality": record.get("ocr_quality"),
         },
@@ -364,6 +567,10 @@ def serialize_evidence(
         },
         "retrieval": {
             "sources": record.get("_retrieval_sources", []),
+            "matched_variants": record.get("_matched_variants", []),
+            "concept_groups": record.get("_matched_concept_groups", []),
+            "qualification": record.get("_qualification", {}),
+            "register_references": record.get("_register_references", []),
             "rrf_score": record.get("rrf_score"),
             "final_score": record.get("final_score"),
             "debug": debug,
@@ -407,6 +614,9 @@ def build_research_package(question: str, retrieval_payload: dict) -> dict:
             "verified_author_text_count": sum(
                 item["provenance"]["verified_author_text"] for item in evidence
             ),
+            "evidence_eligible_count": sum(
+                item["provenance"].get("evidence_eligible", False) for item in evidence
+            ),
             "unverified_locator_count": sum(
                 not item["locator"]["locator_verified"] for item in evidence
             ),
@@ -421,6 +631,8 @@ def build_research_package(question: str, retrieval_payload: dict) -> dict:
             "Editorial and APPARAT material must be attributed to the editors.",
             "An unverified locator must be checked against the printed MEGA edition before formal citation.",
             "Retain evidence_id when drafting so every claim can be audited.",
+            "Sachregister records are navigation hints only; cite the resolved TEXT passage.",
+            "Related non-equivalent terms provide context and must not be reported as exact concept hits.",
         ],
         "evidence": evidence,
     }

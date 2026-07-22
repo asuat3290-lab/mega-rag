@@ -1,0 +1,2 @@
+# Optional integration only. Core search and the JSON CLI do not require MCP.
+mcp>=1.0,<2

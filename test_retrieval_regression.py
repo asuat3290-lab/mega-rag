@@ -396,11 +396,15 @@ def main():
     print(f"PASS={pass_cnt} FAIL_ALG={fail_cnt} XFAIL_DATA={xfail_cnt} SKIP={skip_cnt} "
           f"({pass_cnt}/{pass_cnt+fail_cnt} 算法测试通过)")
 
-    # Save report
+    # Saving a diagnostic report is useful but must not change the algorithmic
+    # exit status (for example in a read-only CI checkout).
     report_path = Path(__file__).parent / "test_report.json"
-    json.dump(results, open(report_path, 'w', encoding='utf-8'),
-              ensure_ascii=False, indent=2, default=str)
-    print(f"Report: {report_path}")
+    try:
+        with report_path.open("w", encoding="utf-8") as handle:
+            json.dump(results, handle, ensure_ascii=False, indent=2, default=str)
+        print(f"Report: {report_path}")
+    except OSError as exc:
+        print(f"Report not written: {type(exc).__name__}: {exc}", file=sys.stderr)
 
     return fail_cnt == 0
 

@@ -23,6 +23,11 @@ python test_retrieval_regression.py
 python eval_retrieval.py --modes page,passage,hybrid --top-k 10
 python research_export.py "一般劳动是什么" --top-k 12
 python test_research_export.py
+python mega_agent.py status
+python mega_agent.py search "利润率下降" --detail index --save
+python mega_agent.py verify "你的观点" --budget brief
+python test_claim_audit.py
+python test_agent_service.py
 python evidence_library.py status --json
 python evidence_library.py import research_exports
 python test_evidence_library.py
@@ -44,3 +49,28 @@ python test_evidence_library.py
 - `research_library.db` 保存人工审核；`research_library_exports/` 保存论文证据集，均不进入 Git。
 - MEGAdigital 与 OCR 记录不相互覆盖，优先级由检索重排处理。
 - `index_health.py` 是只读检查；出现 `ERROR` 时不要继续写库，先按运维文档恢复。
+
+## 专家型 QueryPlan 与 Agent 接口
+
+研究型检索现在先生成结构化 QueryPlan，再进入全局检索、目标卷注入、Sachregister 导航、候选资格判定和证据输出。默认 `local` 模式不调用 API；只有显式启用 `--hybrid` 时才用 Flash 对检索计划做受约束的补充。
+
+```powershell
+cd D:\mega_rag
+python mega_agent.py status
+python mega_agent.py plan "马克思如何讨论资本集中" --no-probe --no-register
+python mega_agent.py search "马克思如何讨论资本集中" --detail index
+python mega_agent.py verify "马克思主要用异化描述资本关系" --local-only
+```
+
+外部 Agent 可以先调用 `plan`，必要时通过 `--refinement-file plan.json` 补充德语词形和目标卷，再调用 `search --detail index`。只展开少量选中的 `E###` 证据，可以显著降低 token 消耗。完整架构和协议见 [docs/expert_retrieval_architecture.md](docs/expert_retrieval_architecture.md) 与 [docs/agent_query_plan.md](docs/agent_query_plan.md)。
+
+修改 QueryPlan、检索分支、候选资格或观点核验逻辑后，应运行：
+
+```powershell
+python test_query_plan.py
+python test_auxiliary_retrieval.py
+python test_retrieval_quality.py
+python test_query_plan_model.py
+python test_claim_audit.py
+python test_retrieval_regression.py
+```

@@ -1,0 +1,104 @@
+version: mega-query-rules-v1
+
+# Terms in this list remain searchable, but are demoted when a more
+# discriminating concept is present in the same query.
+contextual_generic_terms:
+  - Kapital
+  - Arbeit
+  - Produkt
+  - Marx
+  - Engels
+  - Hegel
+  - Kritik
+  - Philosophie
+  - Manuskript
+  - Text
+
+strong_quantifiers:
+  predominant: ["主要", "首要", "大多", "mainly", "primarily", "vorwiegend", "hauptsaechlich", "hauptsachlich", "hauptsächlich"]
+  universal: ["总是", "一贯", "始终", "always", "immer", "stets"]
+  exclusive: ["完全", "仅仅", "只指", "only", "exclusively", "ausschliesslich", "ausschließlich"]
+  negative_universal: ["从未", "没有任何", "never", "niemals", "nie"]
+
+rules:
+  - id: capital_concentration
+    triggers: ["Konzentration", "Concentration", "集中", "资本集中"]
+    intent: concept_relation
+    core_terms:
+      - Konzentration
+      - Konzentration des Kapitals
+      - Konzentration der Produktionsmittel
+    historical_variants:
+      - Concentration
+      - Concentration des Kapitals
+      - Concentration der Produktionsmittel
+    related_non_equivalent:
+      - Centralisation
+      - Zentralisation
+      - Centralisation des Kapitals
+      - Zentralisation des Kapitals
+    supporting_terms:
+      - Akkumulation
+      - kapitalistische Akkumulation
+      - Konkurrenz
+      - Konkurrenzkampf
+      - Kreditwesen
+    generic_terms: ["Kapital"]
+    target_works: ["Das Kapital, Band I"]
+    target_volumes: ["II/5", "II/6", "II/7", "II/8", "II/9", "II/10"]
+    target_topics:
+      - allgemeines Gesetz der kapitalistischen Akkumulation
+      - Akkumulation und Centralisation
+    relation_pairs:
+      - ["Konzentration", "Akkumulation"]
+      - ["Concentration", "Centralisation"]
+      - ["Konzentration", "Konkurrenz"]
+    required_signals:
+      any:
+        - ["Konzentration", "Concentration"]
+    negative_signals:
+      numeric_turnover_context: ["Umschlagszeit", "Umschlagszahl", "Tabelle", "Jahresrate"]
+      generic_only: ["Kapital"]
+
+  - id: alienation_usage
+    triggers: ["Entfremdung", "entfremdet", "异化", "alienation"]
+    core_terms:
+      - Entfremdung
+      - entfremdet
+      - entfremdete Arbeit
+    historical_variants:
+      - Entfremdung
+      - entfremdet
+    related_non_equivalent:
+      - Entaeusserung
+      - Entäußerung
+      - Vergegenstaendlichung
+      - Vergegenständlichung
+      - Verselbstaendigung
+      - Verselbständigung
+      - Fetischismus
+    supporting_terms:
+      - Arbeitsprodukt
+      - Product der Arbeit
+      - fremde Macht
+      - feindliche Macht
+      - selbstaendige Macht
+      - selbständige Macht
+      - dem Arbeiter gegenueber
+      - dem Arbeiter gegenüber
+      - gegenuebertritt
+      - gegenübertritt
+    generic_terms: ["Kapital", "Kapitalverhaeltnis", "Kapitalverhältnis", "Kapitalverwertung", "Manuskript"]
+    target_volumes: ["II"]
+    relation_pairs:
+      - ["Entfremdung", "Arbeitsprodukt"]
+      - ["entfremdet", "fremde Macht"]
+      - ["Entfremdung", "Verselbständigung"]
+    required_signals:
+      explicit_any:
+        - ["Entfremdung", "entfremdet"]
+      structural_any:
+        - ["Arbeitsprodukt", "fremde Macht", "feindliche Macht", "gegenübertritt", "gegenuebertritt"]
+    negative_signals:
+      numeric_context: ["Tabelle", "Umschlagszahl", "Preis", "Rate"]
+      generic_only: ["Kapital", "Arbeit"]

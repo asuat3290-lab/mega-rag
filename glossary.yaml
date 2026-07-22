@@ -4,6 +4,14 @@
 terms:
   # === 历史唯物主义核心 ===
   现实的人: "wirkliche Individuen wirklichen Menschen wirklich thätigen Menschen leibhaftigen Menschen lebendiger menschlicher Individuen"
+  现实的个人:
+    de:
+      - "wirkliche Individuen"
+      - "wirklichen Individuen"
+      - "wirklich thätigen Menschen"
+      - "lebendigen menschlichen Individuen"
+    related: ["现实的人"]
+    type: concept
   生产: "Produktion Produktionsweise Produktionsverhältnisse produktiv"
   生产力: "Produktivkräfte Produktionskraft produktive Kraft"
   生产关系: "Produktionsverhältnisse Verkehrsverhältnisse"

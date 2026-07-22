@@ -1,0 +1,30 @@
+cases:
+  - id: profit_rate_decline
+    idea: "马克思把利润率下降理解为资本主义生产的内在趋势。"
+    query: "马克思如何讨论利润率下降的趋势"
+    expected_terms: ["Profitrate"]
+    expected_abteilung: "II"
+    preferred_text_type: "TEXT"
+
+  - id: subsumption_legal_philosophy
+    idea: "马克思在《黑格尔法哲学批判》中批判把现实关系归摄于逻辑范畴。"
+    query: "黑格尔法哲学批判中马克思怎么讨论归摄"
+    expected_terms: ["Subsumtion", "subsumiert", "subsumieren"]
+    expected_abteilung: "I"
+    expected_band: "2"
+    preferred_text_type: "TEXT"
+
+  - id: real_individuals
+    idea: "《德意志意识形态》从现实的个人及其生活过程出发。"
+    query: "德意志意识形态中现实的个人是什么"
+    expected_terms: ["wirklichen Individuen", "wirkliche Individuen", "wirklich thätigen Menschen"]
+    expected_abteilung: "I"
+    expected_band: "5"
+    preferred_text_type: "TEXT"
+
+  - id: alienated_labour
+    idea: "马克思在早期手稿中把异化劳动与劳动产品相对于工人的独立化联系起来。"
+    query: "1844手稿中异化劳动与劳动产品"
+    expected_terms: ["entfremdete Arbeit", "Entfremdung", "entfremdet"]
+    expected_abteilung: "I"
+    preferred_text_type: "TEXT"
