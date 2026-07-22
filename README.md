@@ -81,3 +81,18 @@ python test_claim_audit.py
 python -B -m unittest test_research_plan test_research_orchestrator test_research_plan_model test_agent_service -v
 python test_retrieval_regression.py
 ```
+
+## Evidence and agent safety contract
+
+Retrieval candidates are not automatically evidence. Every search package exposes `synthesis_gate`, phrase-aware qualification, provenance status, citation readiness, and a stable `evidence_uid`. `E001` identifiers are local to one package only.
+
+For compound research, external agents must use:
+
+```powershell
+python mega_agent.py research-plan "研究问题"
+python mega_agent.py research-run "研究问题" --detail index --save
+python mega_agent.py evidence research_run_xxx.json ev_xxx --detail full
+python mega_agent.py report-check report.json research_run_xxx.json
+```
+
+A closed synthesis gate means the output is a diagnostic candidate package, not a basis for a positive answer. See [docs/evidence_report_contract.md](docs/evidence_report_contract.md) and [AGENTS.md](AGENTS.md).

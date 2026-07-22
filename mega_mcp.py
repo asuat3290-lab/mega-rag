@@ -6,8 +6,8 @@ import json
 import sys
 
 from agent_service import (
-    capabilities, plan_agent, register_agent, search_agent, status_agent,
-    research_plan_agent, research_run_agent,
+    capabilities, plan_agent, register_agent, report_check_agent, search_agent,
+    status_agent, research_plan_agent, research_run_agent,
     term_probe_agent, verify_agent,
 )
 
@@ -128,6 +128,12 @@ def mega_search(
         planner_mode="agent_supplied" if refinement else planner_mode,
         plan_refinement=refinement,
     )
+
+
+@mcp.tool()
+def mega_report_check(report_path: str, source_path: str) -> dict:
+    """Validate structured claims and quotations against a saved evidence artifact."""
+    return report_check_agent(report_path, source_path)
 
 
 @mcp.tool()

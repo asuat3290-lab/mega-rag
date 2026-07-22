@@ -395,3 +395,9 @@ python mega_agent.py verify "你的观点" --local-only
 外部 Agent 的推荐方式是：先 `plan`，必要时补充 refinement，再 `search(detail=index)`，最后只展开少量选中的 `E###`。参见 `agent_query_plan.md`。
 
 复合问题应改用 `research-plan` 和 `research-run`。后者会返回每个分支的充分性、claim-evidence matrix、尚缺的外部经验材料，并采用轮转证据预算防止第一个分支占满候选。完整设计见 `docs/research_orchestration.md`。
+
+## 研究报告的可靠性状态
+
+工作台把结果分为诊断候选包与可综合证据包。界面或 Agent 返回多条结果时，仍需查看 `synthesis_gate`；只有 `synthesis_allowed=true` 才能进入回答阶段。正式引用还要求证据本身 `quote_eligible=true`。
+
+跨查询保存或合并证据时使用 `evidence_uid`。`E001` 只是单个包内的显示序号。外部 Agent 的报告可以用 `python mega_agent.py report-check 报告.json 来源.json` 做零 API token 校验。

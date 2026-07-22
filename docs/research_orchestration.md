@@ -209,3 +209,9 @@ python test_retrieval_regression.py
 - 索引预览被 Agent 当作正式引文；
 - APPARAT 或编者文本被归于马克思、恩格斯。
 
+
+## Evidence gate
+
+Each branch now reports semantic relevance, provenance eligibility, and citation readiness separately. The run-level `synthesis_gate` preserves unresolved branches and external empirical requirements. Evidence carries a stable `evidence_uid`; package-local `E###` values are for display only.
+
+An agent-authored report must pass `mega_agent.py report-check` before prose export. This prevents ad-hoc merging of multiple searches, duplicate evidence IDs, unsupported contemporary claims, and quotations from previews or unverified sources.

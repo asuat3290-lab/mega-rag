@@ -20,6 +20,8 @@ from typing import Any, Iterable
 
 import yaml
 
+from evidence_identity import stable_evidence_key
+
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -227,27 +229,7 @@ def initialize_library(path: str | Path | None = None) -> Path:
 
 
 def _evidence_key(item: dict) -> str:
-    evidence = item.get("evidence") or {}
-    record = item.get("record") or {}
-    locator = item.get("locator") or {}
-    context = str(evidence.get("german_context") or "")
-    quote_hash = evidence.get("quote_sha256") or hashlib.sha256(
-        context.encode("utf-8")
-    ).hexdigest()
-    identity = {
-        "page_id": record.get("page_id"),
-        "passage_id": record.get("passage_id"),
-        "record_id": record.get("record_id"),
-        "quote_sha256": quote_hash,
-        "abteilung": locator.get("abteilung"),
-        "band": locator.get("band"),
-        "text_type": locator.get("text_type"),
-        "page": locator.get("physical_or_source_page"),
-        "char_start": locator.get("char_start"),
-        "char_end": locator.get("char_end"),
-    }
-    digest = hashlib.sha256(_json(identity).encode("utf-8")).hexdigest()
-    return f"ev_{digest}"
+    return stable_evidence_key(item)
 
 
 def _normalize_tags(value: Any) -> list[str]:

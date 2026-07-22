@@ -30,11 +30,13 @@ from concept_retrieval import (
     merge_core_candidates,
     search_core_variants,
 )
+from evidence_identity import package_evidence_ref, stable_evidence_key
 from glossary_loader import expand_with_glossary, load_glossary
 from index_version import get_current_version
 from query_analyzer import analyze_query, build_priority_terms
 from query_plan import build_query_plan
 from rerank import rerank
+from report_contract import evaluate_package_gate
 from retrieval_quality import apply_candidate_qualification, assess_retrieval_adequacy
 from sachregister import resolve_register_targets, search_sachregister
 from snippet_extractor import (
@@ -103,6 +105,9 @@ def _prepare_query(question: str, glossary: dict, intent_override: str = None,
     expanded, matched_terms, hints = expand_with_glossary(question, glossary)
     profile = copy.deepcopy(plan["base_query_profile"])
     profile["intent"] = plan["routing_intent"]
+    profile["qualification_groups"] = copy.deepcopy(
+        plan.get("qualification_groups", profile.get("qualification_groups", []))
+    )
     profile["core_expansions"] = _dedupe_terms(
         profile.get("core_expansions", [])
         + plan["core_terms"] + plan["historical_variants"]
@@ -577,7 +582,7 @@ def serialize_evidence(
     locator = _locator(record)
     source_status = _source_status(record, locator)
     debug = record.get("_debug", {})
-    return {
+    payload = {
         "evidence_id": f"E{rank:03d}",
         "rank": rank,
         "record": {
@@ -619,7 +624,11 @@ def serialize_evidence(
             "quote_sha256": hashlib.sha256(snippet.encode("utf-8")).hexdigest(),
             "character_count": len(snippet),
             "rough_token_estimate": max(1, round(len(snippet) / 4.2)),
-            "quote_eligible": source_status["source_quote_eligible"],
+            "context_boundary_complete": bool(record.get("context_boundary_complete")),
+            "quote_eligible": bool(
+                source_status["source_quote_eligible"]
+                and record.get("context_boundary_complete")
+            ),
         },
         "retrieval": {
             "sources": record.get("_retrieval_sources", []),
@@ -639,21 +648,60 @@ def serialize_evidence(
             "research_notes": None,
         },
     }
+    payload["evidence_uid"] = stable_evidence_key(payload)
+    return payload
+
 
 
 def build_research_package(question: str, retrieval_payload: dict) -> dict:
     query = retrieval_payload["query"]
-    evidence = [
-        serialize_evidence(record, rank, query["priority_terms"])
-        for rank, record in enumerate(retrieval_payload.get("results", []), start=1)
-    ]
     index_version = get_current_version()
     query_digest = _query_hash(question)
     generated_at = _now_iso()
     package_seed = f"{query_digest}|{index_version}|{generated_at}"
     package_id = hashlib.sha256(package_seed.encode("utf-8")).hexdigest()[:16]
+    evidence = [
+        serialize_evidence(record, rank, query["priority_terms"])
+        for rank, record in enumerate(retrieval_payload.get("results", []), start=1)
+    ]
+    for item in evidence:
+        item["package_evidence_ref"] = package_evidence_ref(
+            package_id, item["evidence_id"]
+        )
+        item["evidence_role"] = (
+            "qualified_evidence"
+            if item.get("provenance", {}).get("evidence_eligible")
+            else "provisional_candidate"
+        )
     total_chars = sum(item["evidence"]["character_count"] for item in evidence)
-    return {
+    summary = {
+        # evidence_count remains the total candidate count for v1 compatibility.
+        "evidence_count": len(evidence),
+        "candidate_count": len(evidence),
+        "qualified_evidence_count": sum(
+            item["provenance"].get("evidence_eligible", False) for item in evidence
+        ),
+        "authoritative_digital_count": sum(
+            item["source"]["collection"] == "megadigital" for item in evidence
+        ),
+        "verified_author_text_count": sum(
+            item["provenance"]["verified_author_text"] for item in evidence
+        ),
+        "evidence_eligible_count": sum(
+            item["provenance"].get("evidence_eligible", False) for item in evidence
+        ),
+        "citation_ready_count": sum(
+            item["evidence"].get("quote_eligible", False) for item in evidence
+        ),
+        "unverified_locator_count": sum(
+            not item["locator"]["locator_verified"] for item in evidence
+        ),
+        "total_context_characters": total_chars,
+        "rough_total_tokens": sum(
+            item["evidence"]["rough_token_estimate"] for item in evidence
+        ),
+    }
+    package = {
         "schema_version": EXPORT_SCHEMA_VERSION,
         "package_id": package_id,
         "generated_at": generated_at,
@@ -662,36 +710,23 @@ def build_research_package(question: str, retrieval_payload: dict) -> dict:
         "query_hash": query_digest,
         "query": query,
         "retrieval": retrieval_payload["retrieval"],
-        "summary": {
-            "evidence_count": len(evidence),
-            "authoritative_digital_count": sum(
-                item["source"]["collection"] == "megadigital" for item in evidence
-            ),
-            "verified_author_text_count": sum(
-                item["provenance"]["verified_author_text"] for item in evidence
-            ),
-            "evidence_eligible_count": sum(
-                item["provenance"].get("evidence_eligible", False) for item in evidence
-            ),
-            "unverified_locator_count": sum(
-                not item["locator"]["locator_verified"] for item in evidence
-            ),
-            "total_context_characters": total_chars,
-            "rough_total_tokens": sum(
-                item["evidence"]["rough_token_estimate"] for item in evidence
-            ),
-        },
+        "summary": summary,
         "usage_constraints": [
             "Use only the supplied German context as evidence; do not invent quotations.",
             "Only structured_author_text may be automatically described as Marx/Engels author text.",
             "Editorial and APPARAT material must be attributed to the editors.",
             "An unverified locator must be checked against the printed MEGA edition before formal citation.",
-            "Retain evidence_id when drafting so every claim can be audited.",
+            "Use evidence_uid or package_evidence_ref when combining packages; E### is package-local.",
             "Sachregister records are navigation hints only; cite the resolved TEXT passage.",
             "Related non-equivalent terms provide context and must not be reported as exact concept hits.",
         ],
         "evidence": evidence,
     }
+    gate = evaluate_package_gate(package)
+    package["artifact_type"] = gate["artifact_type"]
+    package["synthesis_gate"] = gate
+    return package
+
 
 
 def render_research_markdown(package: dict) -> str:
@@ -703,7 +738,10 @@ def render_research_markdown(package: dict) -> str:
         f"- Package ID: `{package['package_id']}`",
         f"- Generated: `{package['generated_at']}`",
         f"- Index version: `{package['index_version']}`",
-        f"- Evidence items: {summary['evidence_count']}",
+        f"- Artifact type: `{package.get('artifact_type', 'research_evidence_package')}`",
+        f"- Evidence candidates: {summary.get('candidate_count', summary['evidence_count'])}",
+        f"- Qualified evidence: {summary.get('qualified_evidence_count', 0)}",
+        f"- Synthesis allowed: `{str(package.get('synthesis_gate', {}).get('synthesis_allowed', False)).lower()}`",
         f"- Approximate evidence tokens: {summary['rough_total_tokens']}",
         "",
         "## Research question",
@@ -725,14 +763,15 @@ def render_research_markdown(package: dict) -> str:
         "",
         "## Evidence index",
         "",
-        "| ID | Source | Layer | Matched terms | Locator verified |",
-        "|---|---|---|---|---|",
+        "| ID | Stable UID | Role | Source | Layer | Matched terms | Locator verified |",
+        "|---|---|---|---|---|---|---|",
     ]
     for item in package["evidence"]:
         matched = ", ".join(item["evidence"]["matched_priority_terms"]) or "-"
         verified = "yes" if item["locator"]["locator_verified"] else "no"
         lines.append(
-            f"| {item['evidence_id']} | {item['locator']['citation_stub']} | "
+            f"| {item['evidence_id']} | `{item.get('evidence_uid', '-')}` | "
+            f"{item.get('evidence_role', '-')} | {item['locator']['citation_stub']} | "
             f"{item['provenance']['text_layer_label']} | {matched} | {verified} |"
         )
 
@@ -742,6 +781,9 @@ def render_research_markdown(package: dict) -> str:
             "",
             f"## {item['evidence_id']} - {item['locator']['citation_stub']}",
             "",
+            f"- Stable UID: `{item.get('evidence_uid', '-')}`",
+            f"- Package reference: `{item.get('package_evidence_ref', '-')}`",
+            f"- Evidence role: `{item.get('evidence_role', '-')}`",
             f"- Source: {item['source']['display_label']}",
             f"- Title: {item['source']['title'] or '-'}",
             f"- Collection: `{item['source']['collection']}`",
@@ -774,7 +816,7 @@ def render_research_markdown(package: dict) -> str:
         "",
         "## Instructions for Codex or another analysis model",
         "",
-        "1. Refer to evidence by its stable `E###` identifier.",
+        "1. Use `evidence_uid` across packages; `E###` is package-local display only.",
         "2. Distinguish author text, editorial material, and unclassified Textband pages.",
         "3. Do not turn a PDF physical page into a formal MEGA page citation without verification.",
         "4. State explicitly when the evidence package does not support a requested claim.",
@@ -869,7 +911,9 @@ def main() -> int:
     for name, path in exported["paths"].items():
         if path:
             print(f"{name}: {path}")
-    return 0 if package["summary"]["evidence_count"] else 2
+    if not package["summary"]["evidence_count"]:
+        return 2
+    return 0 if package.get("synthesis_gate", {}).get("synthesis_allowed") else 3
 
 
 if __name__ == "__main__":

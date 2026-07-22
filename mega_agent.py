@@ -16,6 +16,7 @@ from agent_service import (
     capabilities,
     evidence_from_package,
     plan_agent,
+    report_check_agent,
     research_plan_agent,
     research_run_agent,
     register_agent,
@@ -106,6 +107,12 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--no-cache", action="store_true")
     verify.add_argument("--save", action="store_true")
     verify.add_argument("--output-dir")
+
+    report_check = subparsers.add_parser(
+        "report-check", help="validate structured report claims against saved evidence"
+    )
+    report_check.add_argument("report")
+    report_check.add_argument("source")
 
     evidence = subparsers.add_parser("evidence", help="expand evidence from a saved JSON package")
     evidence.add_argument("package")
@@ -202,6 +209,8 @@ def _dispatch(args: argparse.Namespace) -> dict:
             output_dir=args.output_dir,
             progress=lambda message: print(message, file=sys.stderr),
         )
+    if args.command == "report-check":
+        return report_check_agent(args.report, args.source)
     if args.command == "evidence":
         return evidence_from_package(args.package, args.ids, detail=args.detail)
     raise ValueError(f"unsupported command: {args.command}")
@@ -214,6 +223,8 @@ def main() -> int:
         with contextlib.redirect_stdout(sys.stderr):
             output = _dispatch(args)
         print(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
+        if output.get("operation") == "report_check":
+            return 0 if output.get("validation", {}).get("valid") else 3
         return 0
     except Exception as exc:
         error = {

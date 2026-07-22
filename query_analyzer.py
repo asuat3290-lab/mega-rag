@@ -4,8 +4,11 @@ import re
 from typing import Dict, List
 
 from glossary_loader import (
+    get_glossary_canonical_term,
     get_glossary_entry,
+    get_glossary_exact_terms,
     get_glossary_expansions,
+    get_glossary_qualification_groups,
     normalize_key,
 )
 
@@ -47,11 +50,11 @@ WORK_VOLUME_MAP = {
     "博士论文": ("I", "1"),
     "神圣家族": ("I", "2"),
     "论犹太人问题": ("I", "2"),
-    "1844": ("I", "2"),
+    "1844手稿": ("I", "2"),
+    "1844年手稿": ("I", "2"),
     "经济学哲学手稿": ("I", "2"),
     "关于费尔巴哈的提纲": ("I", "5"),
     "德意志意识形态": ("I", "5"),
-    "形态": ("I", "5"),
     "哲学的贫困": ("I", "6"),
     "共产党宣言": ("I", "6"),
     "资本论": ("II", None),
@@ -72,6 +75,47 @@ def _append_unique(values: list, value: str) -> None:
         values.append(value)
 
 
+def _all_spans(text: str, value: str) -> List[tuple[int, int]]:
+    """Return all case-insensitive spans in one normalized coordinate space."""
+    haystack = str(text or "").casefold()
+    needle = str(value or "").strip().casefold()
+    if not needle:
+        return []
+    output = []
+    start = 0
+    while True:
+        index = haystack.find(needle, start)
+        if index < 0:
+            return output
+        output.append((index, index + len(needle)))
+        start = index + max(1, len(needle))
+
+
+def _concept_outside_work_title(question: str, term: str,
+                                work_terms: List[str], glossary: Dict) -> bool:
+    """Keep a concept only when it occurs outside a detected work-title span."""
+    work_spans = []
+    for work in work_terms:
+        entry = get_glossary_entry(work, glossary)
+        names = [work] + list(entry.get("aliases", []))
+        names.extend(get_glossary_exact_terms(work, glossary))
+        for name in names:
+            work_spans.extend(_all_spans(question, name))
+    if not work_spans:
+        return True
+
+    entry = get_glossary_entry(term, glossary)
+    names = [term] + list(entry.get("aliases", []))
+    names.extend(get_glossary_exact_terms(term, glossary))
+    occurrences = [span for name in names for span in _all_spans(question, name)]
+    if not occurrences:
+        return True
+    return any(
+        not any(work_start <= start and end <= work_end
+                for work_start, work_end in work_spans)
+        for start, end in occurrences
+    )
+
 def analyze_query(question: str, expanded_query: str = "",
                   matched_terms: List[str] = None,
                   glossary_entries: Dict = None) -> Dict:
@@ -83,22 +127,41 @@ def analyze_query(question: str, expanded_query: str = "",
     author_terms: List[str] = []
     generic_terms: List[str] = []
 
+    canonical_matched_terms: List[str] = []
     for term in matched_terms:
-        entry = get_glossary_entry(term, glossary_entries)
+        canonical = get_glossary_canonical_term(term, glossary_entries)
+        _append_unique(canonical_matched_terms, canonical)
+        entry = get_glossary_entry(canonical, glossary_entries)
         entry_type = str(entry.get("type", "")).casefold()
-        de_terms = " ".join(get_glossary_expansions(term, glossary_entries))
-        if entry_type == "concept" or (not entry_type and _is_concept_term(term, de_terms)):
-            _append_unique(core_terms, term)
-        elif entry_type == "work" or (not entry_type and _is_work_term(term)):
-            _append_unique(work_terms, term)
-        elif entry_type == "author" or (not entry_type and _is_author_term(term)):
-            _append_unique(author_terms, term)
+        de_terms = " ".join(get_glossary_expansions(canonical, glossary_entries))
+        if entry_type in {"concept", "topic"} or (
+                not entry_type and _is_concept_term(canonical, de_terms)):
+            _append_unique(core_terms, canonical)
+        elif entry_type == "work" or (not entry_type and _is_work_term(canonical)):
+            _append_unique(work_terms, canonical)
+        elif entry_type == "author" or (not entry_type and _is_author_term(canonical)):
+            _append_unique(author_terms, canonical)
         else:
-            _append_unique(generic_terms, term)
+            _append_unique(generic_terms, canonical)
+    matched_terms = canonical_matched_terms
 
     for work_name in WORK_VOLUME_MAP:
         if work_name in question:
             _append_unique(work_terms, work_name)
+
+    # A concept that appears only inside a work title is scope metadata, not
+    # the subject of the question. Keep it as low-priority recall context, but
+    # do not let it qualify evidence. A second occurrence outside the title
+    # remains a genuine core concept.
+    title_embedded_terms = []
+    retained_core_terms = []
+    for term in core_terms:
+        if _concept_outside_work_title(question, term, work_terms, glossary_entries):
+            retained_core_terms.append(term)
+        else:
+            _append_unique(title_embedded_terms, term)
+            _append_unique(generic_terms, term)
+    core_terms = retained_core_terms
 
     intent = _classify_intent(question)
 
@@ -130,10 +193,18 @@ def analyze_query(question: str, expanded_query: str = "",
         _append_unique(generic_terms, value)
 
     core_expansions: List[str] = []
+    recall_terms: List[str] = []
     concept_groups = []
+    qualification_groups = []
     for term in core_terms:
-        for expansion in get_glossary_expansions(term, glossary_entries):
+        exact_terms = get_glossary_exact_terms(term, glossary_entries)
+        recall = get_glossary_expansions(term, glossary_entries)
+        for expansion in exact_terms or recall:
             _append_unique(core_expansions, expansion)
+        for expansion in recall:
+            _append_unique(recall_terms, expansion)
+        groups = get_glossary_qualification_groups(term, glossary_entries)
+        qualification_groups.extend(groups)
         entry = get_glossary_entry(term, glossary_entries)
         for sense in entry.get("senses", []):
             concept_groups.append({
@@ -142,6 +213,21 @@ def analyze_query(question: str, expanded_query: str = "",
                 "terms": [str(value) for value in sense.get("de", []) if str(value)],
                 "source_term": term,
             })
+
+    # User/model supplied lexical residue remains a first-class signal even
+    # when another glossary concept matched. Multi-term lexical input is a
+    # proximity group, not a bag of independent direct-evidence terms.
+    if lexical_core:
+        qualification_groups.append({
+            "id": "lexical_core",
+            "label": "lexical core",
+            "alternatives": list(lexical_core),
+            "source_term": None,
+            "source": "lexical_fallback",
+            "equivalent": True,
+            "match_mode": "all_near" if len(lexical_core) > 1 else "any",
+            "window_chars": 220,
+        })
 
     target_abteilung = None
     target_band = None
@@ -163,10 +249,13 @@ def analyze_query(question: str, expanded_query: str = "",
     return {
         "core_terms": core_terms,
         "core_expansions": core_expansions,
+        "recall_terms": recall_terms,
+        "qualification_groups": qualification_groups,
         "concept_groups": concept_groups,
         "work_terms": work_terms,
         "author_terms": author_terms,
         "generic_terms": generic_terms,
+        "title_embedded_terms": title_embedded_terms,
         "lexical_core": lexical_core,
         "intent": intent,
         "target_abteilung": target_abteilung,

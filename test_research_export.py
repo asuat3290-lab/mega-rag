@@ -38,8 +38,11 @@ def fixture_payload() -> dict:
         "display_snippet": "Die Waarenform enthält den Ausdruck des Werths.",
         "display_preview": "Die Waarenform enthält den Ausdruck des Werths.",
         "matched_term": "Waarenform",
+        "context_boundary_complete": True,
         "final_score": 0.8,
         "_retrieval_sources": ["passage_fts", "scoped_authoritative"],
+        "evidence_eligible": True,
+        "_qualification": {"candidate_class": "direct_author_text"},
         "_debug": {"source_boost": 0.18},
     }
     ocr = {
@@ -62,6 +65,8 @@ def fixture_payload() -> dict:
         "matched_term": "Ideologie",
         "final_score": 0.7,
         "_retrieval_sources": ["page_fts"],
+        "evidence_eligible": True,
+        "_qualification": {"candidate_class": "direct_author_text"},
         "_debug": {},
     }
     return {
@@ -76,13 +81,28 @@ def fixture_payload() -> dict:
                 "target_band": None,
             },
             "priority_terms": ["Waarenform", "Ideologie"],
+            "query_plan": {
+                "plan_status": {"valid_for_evidence": True, "issues": []},
+                "qualification_groups": [
+                    {"id": "terms", "alternatives": ["Waarenform", "Ideologie"]}
+                ],
+            },
         },
         "retrieval": {
             "route": "all",
             "top_k": 2,
             "retrieval_mode": "balanced",
             "rerank_method": "rule",
-            "debug": {},
+            "debug": {
+                "adequacy": {
+                    "status": "adequate",
+                    "axes": {
+                        "semantic": {"status": "adequate", "candidate_count": 2},
+                        "provenance": {"status": "verified", "eligible_count": 2},
+                        "citation": {"status": "ready", "ready_count": 1},
+                    },
+                }
+            },
         },
         "results": [digital, ocr],
     }
@@ -96,12 +116,27 @@ def main() -> int:
 
     digital, ocr = package["evidence"]
     assert digital["evidence_id"] == "E001"
+    assert digital["evidence_uid"].startswith("ev_")
+    assert digital["package_evidence_ref"].endswith(":E001")
+    assert package["synthesis_gate"]["synthesis_allowed"] is True
+    assert package["summary"]["qualified_evidence_count"] == 2
     assert digital["locator"]["locator_verified"] is True
     assert digital["locator"]["citation_stub"] == "MEGA² II/5, TEXT, S. 117"
     assert digital["provenance"]["reliability_class"] == "structured_author_text"
     assert ocr["locator"]["locator_verified"] is False
     assert "PDF physical page" in ocr["locator"]["citation_stub"]
     assert any("not automatically verified" in warning for warning in ocr["warnings"])
+
+    diagnostic_payload = fixture_payload()
+    diagnostic_payload["retrieval"]["debug"]["adequacy"] = {
+        "status": "insufficient",
+        "axes": {"semantic": {"status": "insufficient"}},
+    }
+    for row in diagnostic_payload["results"]:
+        row["evidence_eligible"] = False
+    diagnostic = build_research_package("诊断查询", diagnostic_payload)
+    assert diagnostic["artifact_type"] == "diagnostic_candidate_package"
+    assert diagnostic["synthesis_gate"]["synthesis_allowed"] is False
 
     markdown = render_research_markdown(package)
     assert "E001" in markdown and "E002" in markdown

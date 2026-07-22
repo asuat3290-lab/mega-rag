@@ -19,6 +19,7 @@ import yaml
 
 from glossary_loader import (
     expand_with_glossary,
+    get_glossary_entry,
     get_glossary_expansions,
     load_glossary,
     normalize_key,
@@ -209,6 +210,8 @@ def build_query_plan(question: str, *, glossary: dict | None = None,
     for value in base_profile.get("core_terms", []):
         _add_term(registry, value, "core", "query_profile")
     for value in base_profile.get("generic_terms", []):
+        for expansion in get_glossary_expansions(value, glossary):
+            _add_term(registry, expansion, "generic", "query_profile")
         _add_term(registry, value, "generic", "query_profile")
 
     relation_pairs: list[list[str]] = []
@@ -285,7 +288,7 @@ def build_query_plan(question: str, *, glossary: dict | None = None,
     discriminating = [entry for entry in registry.values()
                       if entry["role"] in {"core", "historical"}
                       and normalize_key(entry["term"]) not in contextual_generic]
-    if discriminating:
+    if discriminating and (matched_rules or len(matched_terms) > 1):
         rule_generic = {
             normalize_key(value)
             for rule in matched_rules for value in rule.get("generic_terms", [])
@@ -302,13 +305,65 @@ def build_query_plan(question: str, *, glossary: dict | None = None,
                 entry["role"] = "generic"
 
     terms = _term_lists(registry)
+    qualification_groups = deepcopy(base_profile.get("qualification_groups", []))
+    for rule in matched_rules:
+        alternatives = _dedupe(
+            list(rule.get("core_terms", []))
+            + list(rule.get("historical_variants", []))
+        )
+        if alternatives:
+            qualification_groups.append({
+                "id": f"rule:{rule.get('id')}",
+                "label": str(rule.get("label") or rule.get("id")),
+                "alternatives": alternatives,
+                "source_term": rule.get("label") or rule.get("id"),
+                "source": f"rule:{rule.get('id')}",
+                "equivalent": True,
+            })
+    qualification_groups = _dedupe(qualification_groups)
+    generic_keys = {normalize_key(value) for value in terms["generic"]}
+    qualification_groups = [
+        group for group in qualification_groups
+        if not (
+            str(group.get("source") or "").startswith("glossary")
+            and group.get("alternatives")
+            and all(
+                normalize_key(value) in generic_keys
+                for value in group.get("alternatives", [])
+            )
+        )
+    ]
     strength, quantifiers = _claim_strength(question, rules)
     target_volumes = _dedupe(target_volumes)
     warnings: list[str] = []
+    title_embedded = list(base_profile.get("title_embedded_terms", []))
+    if title_embedded:
+        warnings.append(
+            "Concept terms found only inside a work title were kept as recall context, "
+            "not evidence qualifiers: " + ", ".join(title_embedded)
+        )
+    scope_only_valid = bool(
+        target_volumes and routing_intent == "apparat_question"
+        and not terms["core"] and not terms["historical"]
+    )
     if strength != "ordinary":
         warnings.append("Strong quantifier detected; absence of a hit is not evidence of absence.")
-    if not terms["core"] and not terms["historical"]:
+    if not terms["core"] and not terms["historical"] and not scope_only_valid:
         warnings.append("No discriminating core term was found; retrieval may be broad.")
+    legacy_ambiguous = [
+        term for term in matched_terms
+        if get_glossary_entry(term, glossary).get("_legacy")
+    ]
+    if legacy_ambiguous:
+        warnings.append(
+            "Legacy glossary entries are recall-only until migrated to structured phrases: "
+            + ", ".join(legacy_ambiguous)
+        )
+    plan_issues = []
+    if not terms["core"] and not terms["historical"] and not scope_only_valid:
+        plan_issues.append("missing_discriminating_core")
+    if (terms["core"] or terms["historical"]) and not qualification_groups:
+        plan_issues.append("missing_qualification_groups")
 
     plan = {
         "protocol": QUERY_PLAN_PROTOCOL,
@@ -328,6 +383,14 @@ def build_query_plan(question: str, *, glossary: dict | None = None,
         "supporting_terms": terms["supporting"],
         "generic_terms": terms["generic"],
         "term_registry": list(registry.values()),
+        "qualification_groups": qualification_groups,
+        "plan_status": {
+            "valid_for_evidence": not plan_issues,
+            "issues": plan_issues,
+            "legacy_ambiguous_terms": legacy_ambiguous,
+            "title_embedded_terms": title_embedded,
+            "scope_only_valid": scope_only_valid,
+        },
         "target_works": _dedupe(target_works),
         "target_volumes": target_volumes,
         "target_topics": _dedupe(target_topics),
@@ -443,6 +506,42 @@ def merge_query_plan(plan: dict, refinement: dict, *, source: str = "agent_suppl
     output["branches"] = _build_branches(
         terms, output["target_volumes"], output["relation_pairs"], output["routing_intent"]
     )
+    supplied_exact = _dedupe(
+        _refinement_terms(refinement.get("core_terms"), "core_terms")
+        + _refinement_terms(refinement.get("historical_variants"), "historical_variants")
+    )
+    groups = list(output.get("qualification_groups", []))
+    if supplied_exact:
+        groups.append({
+            "id": f"refinement:{source}",
+            "label": "agent refinement",
+            "alternatives": supplied_exact,
+            "source_term": None,
+            "source": source,
+            "equivalent": True,
+        })
+    output["qualification_groups"] = _dedupe(groups)
+    plan_issues = []
+    scope_only_valid = bool(
+        output.get("target_volumes")
+        and output.get("routing_intent") == "apparat_question"
+        and not output["core_terms"] and not output["historical_variants"]
+    )
+    if (not output["core_terms"] and not output["historical_variants"]
+            and not scope_only_valid):
+        plan_issues.append("missing_discriminating_core")
+    if (output["core_terms"] or output["historical_variants"]) and not groups:
+        plan_issues.append("missing_qualification_groups")
+    output["plan_status"] = {
+        "valid_for_evidence": not plan_issues,
+        "issues": plan_issues,
+        "legacy_ambiguous_terms": output.get("plan_status", {}).get(
+            "legacy_ambiguous_terms", []
+        ),
+        "title_embedded_terms": output.get("plan_status", {}).get(
+            "title_embedded_terms", []
+        ),
+        "scope_only_valid": scope_only_valid,    }
     digest = hashlib.sha256(
         json.dumps(refinement, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()[:10]
@@ -458,6 +557,7 @@ def compact_plan(plan: dict) -> dict:
         "protocol", "planner_version", "intent", "routing_intent",
         "claim_strength", "core_terms", "historical_variants",
         "related_non_equivalent", "supporting_terms", "generic_terms",
-        "target_works", "target_volumes", "target_topics", "branches", "warnings",
+        "qualification_groups", "plan_status", "target_works", "target_volumes",
+        "target_topics", "branches", "warnings",
     )
     return {key: plan.get(key) for key in keys}

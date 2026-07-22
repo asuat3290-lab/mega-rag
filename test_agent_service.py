@@ -21,8 +21,26 @@ def _retrieval_payload():
             "glossary_hints": {},
             "query_profile": {"intent": "author_argument"},
             "priority_terms": ["fallende Profitrate", "Profitrate"],
+            "query_plan": {
+                "plan_status": {"valid_for_evidence": True, "issues": []},
+                "qualification_groups": [
+                    {"id": "profit", "alternatives": ["fallende Profitrate"]}
+                ],
+            },
         },
-        "retrieval": {"route": "main_text", "debug": {}},
+        "retrieval": {
+            "route": "main_text",
+            "debug": {
+                "adequacy": {
+                    "status": "adequate",
+                    "axes": {
+                        "semantic": {"status": "adequate", "candidate_count": 1},
+                        "provenance": {"status": "verified", "eligible_count": 1},
+                        "citation": {"status": "ready", "ready_count": 1},
+                    },
+                }
+            },
+        },
         "results": [
             {
                 "id": "test:1",
@@ -37,6 +55,7 @@ def _retrieval_payload():
                 "display_snippet": "Eine fallende Profitrate ist hier der Gegenstand der Untersuchung.",
                 "display_preview": "Eine fallende Profitrate ist hier der Gegenstand der Untersuchung.",
                 "matched_term": "fallende Profitrate",
+        "context_boundary_complete": True,
                 "text_layer": "author_text",
                 "source_collection": "megadigital",
                 "source_quality": "authoritative_digital",
@@ -44,6 +63,8 @@ def _retrieval_payload():
                 "source_doc": "test",
                 "ocr_quality": "high",
                 "_retrieval_sources": ["unit_test"],
+                "evidence_eligible": True,
+                "_qualification": {"candidate_class": "direct_author_text"},
             }
         ],
     }
@@ -57,7 +78,9 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["operation"], "search")
         self.assertEqual(response["usage"]["api_tokens"], 0)
         self.assertGreater(response["usage"]["rough_returned_evidence_tokens"], 0)
+        self.assertTrue(response["synthesis_gate"]["synthesis_allowed"])
         evidence = response["evidence"][0]
+        self.assertTrue(evidence["evidence_uid"].startswith("ev_"))
         self.assertTrue(evidence["verified_author_text"])
         self.assertNotIn("german_context", evidence)
         self.assertIn("fallende Profitrate", evidence["preview"])

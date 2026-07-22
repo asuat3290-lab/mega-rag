@@ -47,6 +47,55 @@ def format_source_label(record: Dict) -> str:
         return f"MEGAdigital MEGA {abteilung}/{band}, {text_type}, source p. {page}{suffix}{passage_suffix}"
     return f"MEGA {abteilung}/{band}, {text_type}, PDF p. {page}{passage_suffix}"
 
+def _align_context_boundaries(text: str, start: int, end: int,
+                              anchor: int | None = None,
+                              max_extra: int = 260) -> tuple[int, int, bool]:
+    """Expand a character window to nearby paragraph/sentence boundaries."""
+    sentence_endings = ".!?"
+    closing_marks = "\"')]}\u00bb\u2019\u201c\u201d\u203a"
+
+    left_floor = max(0, start - max_extra)
+    left_scan_end = max(start, min(anchor if anchor is not None else start, len(text)))
+    left_region = text[left_floor:left_scan_end]
+    left_candidates = []
+    paragraph = left_region.rfind("\n\n")
+    if paragraph >= 0:
+        left_candidates.append(paragraph + 2)
+    for index, char in enumerate(left_region):
+        if char not in sentence_endings:
+            continue
+        cursor = index + 1
+        while cursor < len(left_region) and left_region[cursor] in closing_marks:
+            cursor += 1
+        if cursor == len(left_region) or left_region[cursor].isspace():
+            while cursor < len(left_region) and left_region[cursor].isspace():
+                cursor += 1
+            left_candidates.append(cursor)
+    left_complete = start == 0 or bool(left_candidates)
+    if left_candidates:
+        start = left_floor + max(left_candidates)
+
+    right_ceiling = min(len(text), end + max_extra)
+    right_region = text[end:right_ceiling]
+    right_candidates = []
+    paragraph = right_region.find("\n\n")
+    if paragraph >= 0:
+        right_candidates.append(paragraph)
+    for index, char in enumerate(right_region):
+        if char not in sentence_endings:
+            continue
+        cursor = index + 1
+        while cursor < len(right_region) and right_region[cursor] in closing_marks:
+            cursor += 1
+        if cursor == len(right_region) or right_region[cursor].isspace():
+            right_candidates.append(cursor)
+            break
+    right_complete = end == len(text) or bool(right_candidates)
+    if right_candidates:
+        end += min(right_candidates)
+
+    return start, end, left_complete and right_complete
+
 def extract_best_snippet(full_text: str, priority_terms: List[str],
                          before: int = 250, after: int = 900) -> Dict:
     """
@@ -57,6 +106,7 @@ def extract_best_snippet(full_text: str, priority_terms: List[str],
         "preview": (full_text or "")[:200],
         "matched_term": None,
         "match_offset": -1,
+        "context_boundary_complete": False,
     }
 
     if not full_text:
@@ -91,6 +141,9 @@ def extract_best_snippet(full_text: str, priority_terms: List[str],
     if best_pos >= 0:
         start = max(0, best_pos - before)
         end = min(len(full_text), best_pos + after)
+        start, end, boundary_complete = _align_context_boundaries(
+            full_text, start, end, anchor=best_pos
+        )
         snippet = full_text[start:end]
         if start > 0:
             snippet = "..." + snippet
@@ -110,6 +163,7 @@ def extract_best_snippet(full_text: str, priority_terms: List[str],
             "preview": preview,
             "matched_term": best_term,
             "match_offset": abs(best_pos - start),
+            "context_boundary_complete": boundary_complete,
         }
 
     return result
@@ -169,4 +223,5 @@ def build_snippet_for_display(results: List[Dict],
         r['display_snippet'] = extracted['snippet']
         r['display_preview'] = extracted['preview']
         r['matched_term'] = extracted['matched_term']
+        r['context_boundary_complete'] = extracted['context_boundary_complete']
         r['text_layer_label'] = text_layer_label(r)

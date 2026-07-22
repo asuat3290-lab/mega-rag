@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from evidence_identity import package_evidence_ref
 from index_version import get_current_version
+from report_contract import evaluate_research_run_gate
 from research_export import retrieve_research_evidence, serialize_evidence
 from research_plan import build_research_plan, compact_research_plan
 
@@ -40,7 +42,8 @@ def _dedupe(values: list[Any]) -> list[Any]:
 def _evidence_key(item: dict) -> str:
     record = item.get("record", {})
     return str(
-        record.get("passage_id")
+        item.get("evidence_uid")
+        or record.get("passage_id")
         or record.get("record_id")
         or record.get("content_hash")
         or item.get("evidence", {}).get("quote_sha256")
@@ -300,7 +303,25 @@ def run_research(
             "Overall adequacy requires every required MEGA branch, not merely one successful search.",
         ]
     )
-    return {
+    id_to_uid = {}
+    for item in evidence:
+        item["package_evidence_ref"] = package_evidence_ref(
+            run_id, item["evidence_id"]
+        )
+        item["evidence_role"] = (
+            "qualified_evidence"
+            if item.get("provenance", {}).get("evidence_eligible")
+            else "provisional_candidate"
+        )
+        id_to_uid[item["evidence_id"]] = item.get("evidence_uid")
+    for row in claim_matrix:
+        row["evidence_uids"] = [
+            id_to_uid[evidence_id]
+            for evidence_id in row.get("evidence_ids", [])
+            if id_to_uid.get(evidence_id)
+        ]
+
+    payload = {
         "protocol": RESEARCH_RUN_PROTOCOL,
         "run_id": run_id,
         "generated_at": generated_at,
@@ -325,6 +346,8 @@ def run_research(
         },
         "warnings": warnings,
     }
+    payload["synthesis_gate"] = evaluate_research_run_gate(payload)
+    return payload
 
 
 def write_research_run(

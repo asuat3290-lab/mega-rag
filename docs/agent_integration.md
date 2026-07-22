@@ -137,3 +137,15 @@ python D:\mega_rag\mega_mcp.py
 - 中文召回弱：查看 `priority_terms`；确认后将稳定中德映射加入 `glossary.yaml`。
 - 只有编者材料：正文论述使用 `--route main_text --retrieval-mode original_first`。
 - 返回内容过长：使用 `--detail index`，然后只展开 2 至 4 个 E###。
+
+## 强制综合门控
+
+`search` 返回候选并不代表可以回答。Agent 必须检查 `synthesis_gate.synthesis_allowed`，跨包合并必须使用 `evidence_uid`，不能复用包内 `E001` 编号。复合问题使用 `research-run`，普通 `search` 只用于诊断或定位。
+
+最终报告先写成结构化 claims JSON，再执行：
+
+```powershell
+python mega_agent.py report-check report.json source_package_or_run.json
+```
+
+校验未通过时命令返回非零退出码。完整约束见 `docs/evidence_report_contract.md` 和仓库根目录 `AGENTS.md`。

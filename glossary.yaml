@@ -1,50 +1,108 @@
-# MEGA² 中德术语对照表 — 用于查询扩展
-# 格式: 中文术语: "德语检索词（空格分隔，含同义词/变体/旧拼写）"
+# MEGA² 中德术语对照表
+# de 保存可作为概念证据判定的完整词或短语；aliases 保存中文/英文查询别名。
+# related 只用于扩展召回，不自动视为同一概念。
 
 terms:
   # === 历史唯物主义核心 ===
-  现实的人: "wirkliche Individuen wirklichen Menschen wirklich thätigen Menschen leibhaftigen Menschen lebendiger menschlicher Individuen"
-  现实的个人:
-    de:
-      - "wirkliche Individuen"
-      - "wirklichen Individuen"
-      - "wirklich thätigen Menschen"
-      - "lebendigen menschlichen Individuen"
-    related: ["现实的人"]
+  现实的人:
     type: concept
-  生产: "Produktion Produktionsweise Produktionsverhältnisse produktiv"
-  生产力: "Produktivkräfte Produktionskraft produktive Kraft"
-  生产关系: "Produktionsverhältnisse Verkehrsverhältnisse"
-  交往: "Verkehr Verkehrsform Verkehrsverhältnisse"
-  分工: "Theilung der Arbeit Arbeitstheilung"
+    aliases: ["现实的个人"]
+    priority: high
+    query_mode: [exact, semantic]
+    senses:
+      - id: materialist_premise
+        label: "现实的个人与现实生活过程"
+        de:
+          - "wirkliche Individuen"
+          - "wirklichen Individuen"
+          - "wirklich thätigen Menschen"
+          - "lebendigen menschlichen Individuen"
+      - id: critique_of_abstract_man
+        label: "对抽象人的批判"
+        de:
+          - "wirklichen individuellen leibhaftigen Menschen"
+          - "wirklich existirenden thätigen Menschen"
+    related:
+      - "wirklicher Lebensprozeß"
+      - "materielle Lebensbedingungen"
 
-  # === 共同体 ===
-  共同体: "Gemeinschaft Gemeinwesen Gemeindewesen Assoziation Verein"
-  虚幻的共同体: "illusorische Gemeinschaft scheinbare Gemeinschaft"
-  真正的共同体: "wirkliche Gemeinschaft wirkliches Gemeinwesen"
-  阶级: "Klasse Klassen Klassenkampf Klassenherrschaft"
-  国家: "Staat Staatsgewalt Staatsmaschinerie politische Gewalt"
+  生产:
+    type: concept
+    de: ["Produktion", "Produktionsweise", "produktiv"]
+    recall: ["Produktionsverhältnisse"]
+  生产力:
+    type: concept
+    de: ["Produktivkräfte", "Produktionskraft", "produktive Kraft"]
+  生产关系:
+    type: concept
+    priority: high
+    de: ["Produktionsverhältnisse"]
+    recall: ["Verkehrsverhältnisse"]
+  交往:
+    type: concept
+    priority: high
+    de: ["Verkehr", "Verkehrsform", "Verkehrsverhältnisse"]
+  分工:
+    type: concept
+    de: ["Theilung der Arbeit", "Arbeitstheilung"]
+
+  # === 共同体与政治 ===
+  共同体:
+    type: concept
+    de: ["Gemeinschaft", "Gemeinwesen", "Gemeindewesen", "Assoziation", "Verein"]
+  虚幻的共同体:
+    type: concept
+    de: ["illusorische Gemeinschaft", "scheinbare Gemeinschaft"]
+  真正的共同体:
+    type: concept
+    de: ["wirkliche Gemeinschaft", "wirkliches Gemeinwesen"]
+  阶级:
+    type: concept
+    de: ["Klasse", "Klassen", "Klassenkampf", "Klassenherrschaft"]
+  国家:
+    type: concept
+    de: ["Staat", "Staatsgewalt", "Staatsmaschinerie", "politische Gewalt"]
 
   # === 异化 ===
-  异化: "Entfremdung entfremdete Arbeit Entäußerung Veräußerung Vergegenständlichung"
-  外化: "Entäußerung Veräußerung"
-  对象化: "Vergegenständlichung Gegenständlichkeit"
-  物化: "Verdinglichung Versachlichung"
+  异化:
+    type: concept
+    priority: high
+    de: ["Entfremdung", "entfremdete Arbeit"]
+    related: ["外化", "对象化", "物化"]
+  外化:
+    type: concept
+    de: ["Entäußerung", "Veräußerung"]
+  对象化:
+    type: concept
+    de: ["Vergegenständlichung", "Gegenständlichkeit"]
+  物化:
+    type: concept
+    de: ["Verdinglichung", "Versachlichung"]
 
   # === 政治经济学 ===
-  剩余价值: "Mehrwert Surpluswert surplus value"
-  资本: "Kapital Kapitalverhältnis Kapitalverwertung"
-  价值: "Wert Tauschwert Gebrauchswert Werth"
-  商品: "Waare Ware Waarenform"
-  货币: "Geld Geldform Gold Silber"
-  利润: "Profit Profitrate Durchschnittsprofit"
+  剩余价值:
+    type: concept
+    de: ["Mehrwert", "Mehrwerth", "Surpluswert", "surplus value"]
+  资本:
+    type: concept
+    de: ["Kapital", "Capital", "Kapitalverhältnis", "Kapitalverwertung"]
+  价值:
+    type: concept
+    de: ["Wert", "Werth", "Tauschwert", "Gebrauchswert"]
+  商品:
+    type: concept
+    de: ["Waare", "Ware", "Waarenform", "Warenform"]
+  货币:
+    type: concept
+    de: ["Geld", "Geldform", "Gold", "Silber"]
+  利润:
+    type: concept
+    de: ["Profit", "Durchschnittsprofit"]
+    recall: ["Profitrate"]
   利润率:
     type: concept
     priority: high
-    de:
-      - "Profitrate"
-      - "Rate des Profits"
-      - "allgemeine Profitrate"
+    de: ["Profitrate", "Rate des Profits", "allgemeine Profitrate"]
   资本有机构成:
     type: concept
     priority: high
@@ -55,44 +113,24 @@ terms:
       - "technische Zusammensetzung des Kapitals"
   不变资本:
     type: concept
-    de:
-      - "konstantes Kapital"
-      - "constantes Capital"
-      - "konstanter Kapitalteil"
+    de: ["konstantes Kapital", "constantes Capital", "konstanter Kapitalteil"]
   可变资本:
     type: concept
-    de:
-      - "variables Kapital"
-      - "variables Capital"
-      - "variabler Kapitalteil"
+    de: ["variables Kapital", "variables Capital", "variabler Kapitalteil"]
   固定资本:
     type: concept
-    de:
-      - "fixes Kapital"
-      - "capital fixe"
-      - "fixes Capital"
+    de: ["fixes Kapital", "capital fixe", "fixes Capital"]
   相对剩余价值:
     type: concept
-    de:
-      - "relativer Mehrwert"
-      - "relativer Mehrwerth"
-      - "relative Surplusvalue"
+    de: ["relativer Mehrwert", "relativer Mehrwerth", "relative Surplusvalue"]
   机器:
     type: concept
+    aliases: ["机械"]
     priority: high
     query_mode: [exact, semantic]
     must_search_exact: true
-    de:
-      - "Maschinerie"
-      - "Maschine"
-      - "Maschinensystem"
-      - "Maschinenbetrieb"
-  机械:
-    type: concept
-    de:
-      - "Maschinerie"
-      - "Maschine"
-      - "mechanisch"
+    de: ["Maschinerie", "Maschine", "Maschinensystem", "Maschinenbetrieb"]
+    related: ["mechanisch"]
   一般智力:
     type: concept
     de:
@@ -121,7 +159,6 @@ terms:
       - "fallende Profitrate"
       - "sinkende Profitrate"
       - "Profitrate fällt"
-      - "Profitrate"
   贱民:
     type: concept
     priority: high
@@ -130,75 +167,150 @@ terms:
     senses:
       - id: poebel
         label: "Pöbel／群氓、社会贱民"
-        de:
-          - "Pöbel"
-          - "Gesindel"
-          - "Canaille"
+        de: ["Pöbel", "Gesindel", "Canaille"]
       - id: paria
         label: "Paria／被排斥的贱民"
-        de:
-          - "Paria"
-          - "Parias"
+        de: ["Paria", "Parias"]
       - id: lumpenproletariat
         label: "Lumpenproletariat／流氓无产阶级"
-        de:
-          - "Lumpenproletariat"
-          - "Lumpenproletarier"
+        de: ["Lumpenproletariat", "Lumpenproletarier"]
       - id: lazzaroni
         label: "Lazzaroni／拉扎罗尼"
-        de:
-          - "Lazzaroni"
-  地租: "Grundrente Rente Differentialrente"
-  工资: "Arbeitslohn Lohn Lohnarbeit"
-  私有财产: "Privateigenthum Eigenthum Privateigentum"
-  剥削: "Ausbeutung Exploitation"
+        de: ["Lazzaroni"]
+  地租:
+    type: concept
+    de: ["Grundrente", "Rente", "Differentialrente"]
+  工资:
+    type: concept
+    de: ["Arbeitslohn", "Lohn", "Lohnarbeit"]
+  私有财产:
+    type: concept
+    de: ["Privateigenthum", "Privateigentum", "Eigenthum"]
+  剥削:
+    type: concept
+    de: ["Ausbeutung", "Exploitation"]
 
   # === 劳动概念 ===
-  一般劳动: "allgemeine Arbeit allgemeinen Arbeit allgemeiner Arbeit abstrakte Arbeit abstract labour"
-  抽象劳动: "abstrakte Arbeit abstrakten Arbeit abstrakter Arbeit abstract labour"
-  具体劳动: "konkrete Arbeit konkreten Arbeit nützliche Arbeit concrete labour"
+  一般劳动:
+    type: concept
+    priority: high
+    de:
+      - "allgemeine Arbeit"
+      - "allgemeinen Arbeit"
+      - "allgemeiner Arbeit"
+    recall: ["abstract labour"]
+    related: ["抽象劳动"]
+  抽象劳动:
+    type: concept
+    priority: high
+    de: ["abstrakte Arbeit", "abstrakten Arbeit", "abstrakter Arbeit", "abstract labour"]
+  具体劳动:
+    type: concept
+    de: ["konkrete Arbeit", "konkreten Arbeit", "nützliche Arbeit", "concrete labour"]
 
   # === 历史阶段 ===
-  封建: "feudal Feudalismus Feudalität Leibeigenschaft"
-  市民社会: "bürgerliche Gesellschaft bürgerlichen Gesellschaft"
-  资本主义: "Kapitalismus kapitalistische Produktionsweise"
-  共产主义: "Kommunismus communistisch"
-  社会主义: "Sozialismus socialistisch"
+  封建:
+    type: concept
+    de: ["feudal", "Feudalismus", "Feudalität", "Leibeigenschaft"]
+  市民社会:
+    type: concept
+    de: ["bürgerliche Gesellschaft", "bürgerlichen Gesellschaft"]
+  资本主义:
+    type: concept
+    de: ["Kapitalismus", "kapitalistische Produktionsweise"]
+  共产主义:
+    type: concept
+    de: ["Kommunismus", "communistisch"]
+  社会主义:
+    type: concept
+    de: ["Sozialismus", "socialistisch"]
 
-  # === 意识/意识形态 ===
-  意识形态: "Ideologie ideologisch Bewußtseinsformen ideologische"
-  意识: "Bewußtsein Bewusstsein"
-  观念: "Vorstellung Vorstellungen Idee"
+  # === 意识与方法 ===
+  意识形态:
+    type: concept
+    de: ["Ideologie", "ideologisch", "Bewußtseinsformen", "ideologische"]
+  意识:
+    type: concept
+    de: ["Bewußtsein", "Bewusstsein"]
+  观念:
+    type: concept
+    de: ["Vorstellung", "Vorstellungen", "Idee"]
+  辩证法:
+    type: concept
+    de: ["Dialektik", "dialektisch"]
+  唯物:
+    type: concept
+    de: ["materialistisch", "Materialismus", "materiell"]
+  抽象:
+    type: concept
+    de: ["Abstraktion", "abstrakt", "abstrahiren"]
+  具体:
+    type: concept
+    de: ["konkret", "Concrete"]
+  归摄:
+    type: concept
+    aliases: ["subsumption"]
+    de: ["Subsumtion", "subsumieren", "subsumiert"]
 
-  # === 方法论 ===
-  辩证法: "Dialektik dialektisch"
-  唯物: "materialistisch Materialismus materiell"
-  抽象: "Abstraktion abstrakt abstrahiren"
-  具体: "konkret Concrete"
-  归摄: "Subsumtion subsumieren subsumiert"
-  subsumption: "Subsumtion subsumieren subsumiert"
-  黑格尔法哲学批判: "Hegelschen Rechtsphilosophie Hegel Rechtsphilosophie Kritik"
+  # === 作品、材料类型与人物 ===
+  黑格尔法哲学批判:
+    type: work
+    de: ["Hegelschen Rechtsphilosophie", "Rechtsphilosophie"]
+    related: ["Hegel", "Kritik"]
+    abteilung_hint: "I"
+    band_hint: "2"
+  书信:
+    type: document
+    de: ["Brief", "Briefwechsel", "Korrespondenz"]
+  马克思致恩格斯:
+    type: document
+    de: ["Marx an Engels"]
+  恩格斯致马克思:
+    type: document
+    de: ["Engels an Marx"]
+  手稿:
+    type: document
+    de: ["Manuskript", "Manuskripte", "Handschrift"]
+  摘录:
+    type: document
+    de: ["Exzerpt", "Exzerpte", "Auszug"]
+  笔记:
+    type: document
+    de: ["Notiz", "Notizen", "Heft", "Notizbuch"]
+  批注:
+    type: document
+    de: ["Randglosse", "Marginalie", "Anmerkung"]
+  黑格尔:
+    type: author
+    de: ["Hegel", "Hegelschen"]
+  费尔巴哈:
+    type: author
+    de: ["Feuerbach", "Feuerbachs"]
+  蒲鲁东:
+    type: author
+    de: ["Proudhon", "Proudhons"]
+  李嘉图:
+    type: author
+    de: ["Ricardo", "Ricardos"]
+  斯密:
+    type: author
+    de: ["Adam Smith", "Smith"]
 
-  # === 书信 ===
-  书信: "Brief Briefwechsel Korrespondenz"
-  马克思致恩格斯: "Marx an Engels"
-  恩格斯致马克思: "Engels an Marx"
-
-  # === 手稿/笔记 ===
-  手稿: "Manuskript Manuskripte Handschrift"
-  摘录: "Exzerpt Exzerpte Auszug"
-  笔记: "Notiz Notizen Heft Notizbuch"
-  批注: "Randglosse Marginalie Anmerkung"
-
-  # === 人物 ===
-  黑格尔: "Hegel Hegelschen Philosophie"
-  费尔巴哈: "Feuerbach Feuerbachs"
-  蒲鲁东: "Proudhon Proudhons"
-  李嘉图: "Ricardo Ricardos"
-  斯密: "Smith Adam Smith"
-
-  # === 财务状况 / 生活条件 ===
-  经济状况: "Geld Pfund Sterling Schilling Wechsel Einkommen Einnahme Schulden Kredit Erbschaft Honorar Finanzen Misere Elend Geldnot"
-  贫困: "Armut Elend Not Misere poverty Geldnot Geldschwierigkeit"
-  稿费: "Tribune Article Artikel Honorar Pfund Sterling Bezahlung Zahlung"
-  债务: "Schulden Schuld Wechsel Kredit Pfand Leihhaus Verpfändung"
+  # === 财务状况与生活条件 ===
+  经济状况:
+    type: topic
+    de: ["finanzielle Lage", "finanzielle Misere", "Geldnot", "Einkommen", "Einnahme", "Schulden", "Erbschaft", "Honorar"]
+    related: ["Geld", "Pfund Sterling", "Schilling", "Wechsel", "Kredit"]
+  贫困:
+    type: topic
+    priority: high
+    de: ["Armut", "Elend", "Not", "Misere", "Geldnot", "Geldschwierigkeit"]
+  稿费:
+    type: topic
+    priority: high
+    de: ["Honorar", "Bezahlung", "Zahlung", "Pfund Sterling"]
+    related: ["Tribune", "Artikel"]
+  债务:
+    type: topic
+    priority: high
+    de: ["Schulden", "Schuld", "Wechsel", "Kredit", "Pfand", "Leihhaus", "Verpfändung"]

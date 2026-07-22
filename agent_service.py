@@ -14,6 +14,7 @@ from claim_schema import AGENT_SCHEMA_VERSION, CLAIM_AUDIT_SCHEMA_VERSION
 from glossary_loader import load_glossary
 from index_version import get_current_version
 from query_plan import build_query_plan, compact_plan
+from report_contract import load_json_artifact, validate_report_claims
 from research_orchestrator import run_research, write_research_run
 from research_plan import build_research_plan, compact_research_plan
 from sachregister import register_status, search_sachregister
@@ -70,6 +71,9 @@ def _compact_evidence(item: dict, detail: str) -> dict:
         )
     output = {
         "evidence_id": item.get("evidence_id"),
+        "evidence_uid": item.get("evidence_uid"),
+        "package_evidence_ref": item.get("package_evidence_ref"),
+        "evidence_role": item.get("evidence_role"),
         "citation": locator.get("citation_stub") or source.get("display_label"),
         "source_collection": source.get("collection"),
         "source_quality": source.get("quality"),
@@ -77,8 +81,9 @@ def _compact_evidence(item: dict, detail: str) -> dict:
         "edition_status": provenance.get("edition_status"),
         "attribution_note": provenance.get("attribution_note"),
         "source_quote_eligible": source_quote_eligible,
+        "context_boundary_complete": bool(evidence.get("context_boundary_complete")),
         "preview_only": preview_only,
-        "quote_eligible": bool(source_quote_eligible and not preview_only),
+        "quote_eligible": bool(evidence.get("quote_eligible") and not preview_only),
         "text_layer": provenance.get("text_layer"),
         "reliability_class": provenance.get("reliability_class"),
         "verified_author_text": bool(provenance.get("verified_author_text")),
@@ -155,7 +160,11 @@ def capabilities() -> dict:
                     "api_models_optional": True,
                 },
                 "evidence": {
-                    "purpose": "expand selected evidence IDs from a saved JSON package",
+                    "purpose": "expand selected local IDs, stable UIDs, or package references",
+                    "api_models_used": False,
+                },
+                "report_check": {
+                    "purpose": "validate structured claims, quotations, and evidence identities",
                     "api_models_used": False,
                 },
                 "status": {
@@ -175,9 +184,10 @@ def capabilities() -> dict:
                 "call research-run to require adequacy across every MEGA branch",
                 "plan(query) and inspect historical/related/generic roles",
                 "optionally submit a refinement JSON when domain terms are missing",
-                "search(detail=index, save=true)",
-                "inspect citations and warnings",
+                "search(detail=index, save=true) is diagnostic unless synthesis_gate allows use",
+                "inspect synthesis_gate, citations, evidence_role, and warnings",
                 "evidence(ids=[...], detail=snippet|full)",
+                "write claims as structured JSON and run report-check before prose export",
                 "verify only when a semantic claim judgment is needed",
             ],
         },
@@ -340,6 +350,7 @@ def research_run_agent(
             "question": query,
             "research_plan": run.get("research_plan"),
             "status": run.get("status"),
+            "synthesis_gate": run.get("synthesis_gate", {}),
             "branches": run.get("branches", []),
             "claim_evidence_matrix": run.get("claim_evidence_matrix", []),
             "detail": detail,
@@ -435,6 +446,8 @@ def search_agent(
                 "planner_version": package["query"].get("query_plan", {}).get("planner_version"),
             },
             "detail": detail,
+            "artifact_type": package.get("artifact_type"),
+            "synthesis_gate": package.get("synthesis_gate", {}),
             "summary": {
                 **package["summary"],
                 "retrieval_adequacy": package.get("retrieval", {}).get("debug", {}).get("adequacy"),
@@ -526,12 +539,17 @@ def evidence_from_package(
     if not isinstance(items, list):
         raise ValueError("package does not contain an evidence list")
     wanted = {str(value).strip().casefold() for value in evidence_ids or [] if str(value).strip()}
+    def identities(item: dict) -> set[str]:
+        return {
+            str(item.get(key) or "").casefold()
+            for key in ("evidence_id", "evidence_uid", "package_evidence_ref")
+            if str(item.get(key) or "").strip()
+        }
     selected = [
-        item
-        for item in items
-        if not wanted or str(item.get("evidence_id") or "").casefold() in wanted
+        item for item in items
+        if not wanted or identities(item).intersection(wanted)
     ]
-    found = {str(item.get("evidence_id") or "").casefold() for item in selected}
+    found = set().union(*(identities(item) for item in selected)) if selected else set()
     missing = sorted(wanted - found)
     return _envelope(
         "evidence",
@@ -541,6 +559,24 @@ def evidence_from_package(
             "requested_ids": sorted(wanted),
             "missing_ids": missing,
             "evidence": [_compact_evidence(item, detail) for item in selected],
+        },
+    )
+
+
+def report_check_agent(report_path: str | Path, source_path: str | Path) -> dict:
+    """Validate an agent's structured claims against a saved package/run."""
+    report_file = Path(report_path).expanduser().resolve()
+    source_file = Path(source_path).expanduser().resolve()
+    report = load_json_artifact(report_file)
+    source = load_json_artifact(source_file)
+    validation = validate_report_claims(report, source)
+    return _envelope(
+        "report_check",
+        {
+            "report_path": str(report_file),
+            "source_path": str(source_file),
+            "validation": validation,
+            "usage": {"api_tokens": 0},
         },
     )
 
