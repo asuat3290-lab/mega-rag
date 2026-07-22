@@ -16,6 +16,8 @@ from agent_service import (
     capabilities,
     evidence_from_package,
     plan_agent,
+    research_plan_agent,
+    research_run_agent,
     register_agent,
     search_agent,
     status_agent,
@@ -37,6 +39,31 @@ def _parser() -> argparse.ArgumentParser:
     plan.add_argument("--hybrid", action="store_true", help="use bounded Flash plan refinement")
     plan.add_argument("--no-probe", action="store_true")
     plan.add_argument("--no-register", action="store_true")
+
+    research_plan = subparsers.add_parser(
+        "research-plan", help="decompose a compound question by evidence requirement"
+    )
+    research_plan.add_argument("query")
+    research_plan.add_argument("--refinement-file")
+    research_plan.add_argument("--hybrid", action="store_true")
+
+    research_run = subparsers.add_parser(
+        "research-run", help="retrieve all required MEGA branches"
+    )
+    research_run.add_argument("query")
+    research_run.add_argument("--top-k-per-branch", type=int, default=5)
+    research_run.add_argument("--max-evidence", type=int, default=12)
+    research_run.add_argument(
+        "--retrieval-mode",
+        choices=("original_first", "apparat_first", "balanced", "philology"),
+        default="original_first",
+    )
+    research_run.add_argument("--rerank", choices=("none", "rule", "bge"), default="rule")
+    research_run.add_argument("--detail", choices=("index", "snippet", "full"), default="index")
+    research_run.add_argument("--save", action="store_true")
+    research_run.add_argument("--output-dir")
+    research_run.add_argument("--refinement-file")
+    research_run.add_argument("--hybrid", action="store_true")
 
     probe = subparsers.add_parser("term-probe", help="count exact planned terms")
     probe.add_argument("query")
@@ -109,6 +136,34 @@ def _dispatch(args: argparse.Namespace) -> dict:
             include_probe=not args.no_probe,
             include_register=not args.no_register,
         )
+    if args.command == "research-plan":
+        refinement = _load_refinement(args.refinement_file)
+        return research_plan_agent(
+            args.query,
+            refinement=refinement,
+            planner_mode=(
+                "agent_supplied" if refinement
+                else ("hybrid" if args.hybrid else "local")
+            ),
+        )
+    if args.command == "research-run":
+        refinement = _load_refinement(args.refinement_file)
+        return research_run_agent(
+            args.query,
+            top_k_per_branch=args.top_k_per_branch,
+            max_evidence=args.max_evidence,
+            retrieval_mode=args.retrieval_mode,
+            rerank_method=args.rerank,
+            detail=args.detail,
+            save=args.save,
+            output_dir=args.output_dir,
+            refinement=refinement,
+            planner_mode=(
+                "agent_supplied" if refinement
+                else ("hybrid" if args.hybrid else "local")
+            ),
+        )
+
     if args.command == "term-probe":
         return term_probe_agent(
             args.query, refinement=_load_refinement(args.refinement_file)

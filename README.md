@@ -24,6 +24,8 @@ python eval_retrieval.py --modes page,passage,hybrid --top-k 10
 python research_export.py "一般劳动是什么" --top-k 12
 python test_research_export.py
 python mega_agent.py status
+python mega_agent.py research-plan "马克思怎样讨论利润率下降，人工智能是否会降低利润率，如何用机器理论说明"
+python mega_agent.py research-run "同一复合问题" --detail index
 python mega_agent.py search "利润率下降" --detail index --save
 python mega_agent.py verify "你的观点" --budget brief
 python test_claim_audit.py
@@ -60,9 +62,13 @@ python mega_agent.py status
 python mega_agent.py plan "马克思如何讨论资本集中" --no-probe --no-register
 python mega_agent.py search "马克思如何讨论资本集中" --detail index
 python mega_agent.py verify "马克思主要用异化描述资本关系" --local-only
+python mega_agent.py research-plan "复合研究问题"
+python mega_agent.py research-run "复合研究问题" --detail index
 ```
 
 外部 Agent 可以先调用 `plan`，必要时通过 `--refinement-file plan.json` 补充德语词形和目标卷，再调用 `search --detail index`。只展开少量选中的 `E###` 证据，可以显著降低 token 消耗。完整架构和协议见 [docs/expert_retrieval_architecture.md](docs/expert_retrieval_architecture.md) 与 [docs/agent_query_plan.md](docs/agent_query_plan.md)。
+
+复合问题应先调用 `research-plan` 检查问题覆盖，再用 `research-run` 逐分支检索。系统会把 MEGA 原文重建、概念桥接、反作用因素和当代经验要求分开，并禁止把 `detail=index` 的短预览直接当作正式引文。详见 [docs/research_orchestration.md](docs/research_orchestration.md)。
 
 修改 QueryPlan、检索分支、候选资格或观点核验逻辑后，应运行：
 
@@ -72,5 +78,6 @@ python test_auxiliary_retrieval.py
 python test_retrieval_quality.py
 python test_query_plan_model.py
 python test_claim_audit.py
+python -B -m unittest test_research_plan test_research_orchestrator test_research_plan_model test_agent_service -v
 python test_retrieval_regression.py
 ```

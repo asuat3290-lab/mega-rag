@@ -515,6 +515,59 @@ def _reliability_class(record: dict) -> str:
     return "unclassified_or_paratext"
 
 
+def _source_status(record: dict, locator: dict) -> dict:
+    """Describe authorship, edition state, and quotation eligibility separately."""
+    layer = str(record.get("text_layer") or "unclassified")
+    title = str(record.get("source_title") or "").strip()
+    title_key = title.casefold()
+    collection = str(record.get("source_collection") or "ocr").casefold()
+    quality = str(record.get("source_quality") or "ocr").casefold()
+
+    if layer == "author_text":
+        authorship_status = "author_text_layer"
+    elif layer == "apparatus":
+        authorship_status = "editorial_apparatus"
+    elif layer in {"editorial_intro", "editorial_note"}:
+        authorship_status = "editorial_material"
+    elif layer in {"table_of_contents", "front_matter", "register", "illustration_list"}:
+        authorship_status = "paratext"
+    else:
+        authorship_status = "unclassified"
+
+    if any(marker in title_key for marker in ("manuskript", "entwurf", "grundrisse", "exzerpt")):
+        edition_status = "manuscript_or_draft_edition"
+    elif any(marker in title_key for marker in ("druckfassung", "drucktext")):
+        edition_status = "edited_print_edition"
+    elif any(marker in title_key for marker in ("briefwechsel", "briefe", "korrespondenz")):
+        edition_status = "correspondence_edition"
+    elif title:
+        edition_status = "critical_edition_text"
+    else:
+        edition_status = "edition_status_unknown"
+
+    source_quote_eligible = bool(
+        layer == "author_text"
+        and collection == "megadigital"
+        and quality == "authoritative_digital"
+        and locator.get("locator_verified")
+    )
+    if authorship_status == "author_text_layer":
+        attribution_note = (
+            "Author-text layer in the critical edition; edition status must remain visible "
+            "when distinguishing manuscript, draft, and edited print text."
+        )
+    elif authorship_status in {"editorial_apparatus", "editorial_material"}:
+        attribution_note = "Editorial evidence; do not attribute its wording to Marx or Engels."
+    else:
+        attribution_note = "Authorship is not verified automatically; inspect the source before attribution."
+    return {
+        "authorship_status": authorship_status,
+        "edition_status": edition_status,
+        "source_quote_eligible": source_quote_eligible,
+        "attribution_note": attribution_note,
+    }
+
+
 def serialize_evidence(
     record: dict,
     rank: int,
@@ -522,6 +575,7 @@ def serialize_evidence(
 ) -> dict:
     snippet = str(record.get("display_snippet") or record.get("text") or "")
     locator = _locator(record)
+    source_status = _source_status(record, locator)
     debug = record.get("_debug", {})
     return {
         "evidence_id": f"E{rank:03d}",
@@ -555,6 +609,7 @@ def serialize_evidence(
             "candidate_class": record.get("_qualification", {}).get("candidate_class"),
             "reliability_class": _reliability_class(record),
             "ocr_quality": record.get("ocr_quality"),
+            **source_status,
         },
         "evidence": {
             "german_context": snippet,
@@ -564,6 +619,7 @@ def serialize_evidence(
             "quote_sha256": hashlib.sha256(snippet.encode("utf-8")).hexdigest(),
             "character_count": len(snippet),
             "rough_token_estimate": max(1, round(len(snippet) / 4.2)),
+            "quote_eligible": source_status["source_quote_eligible"],
         },
         "retrieval": {
             "sources": record.get("_retrieval_sources", []),

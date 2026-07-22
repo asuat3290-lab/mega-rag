@@ -102,3 +102,131 @@ rules:
     negative_signals:
       numeric_context: ["Tabelle", "Umschlagszahl", "Preis", "Rate"]
       generic_only: ["Kapital", "Arbeit"]
+
+  - id: profit_rate_fall
+    label: "利润率下降"
+    triggers:
+      - "利润率下降"
+      - "利润率下降趋向"
+      - "Fall der Profitrate"
+      - "fallende Profitrate"
+      - "Profitrate fällt"
+    intent: concept_relation
+    core_terms:
+      - "Fall der Profitrate"
+      - "tendenzieller Fall der Profitrate"
+      - "Gesetz des tendenziellen Falls der Profitrate"
+      - "fallende Profitrate"
+      - "Profitrate fällt"
+    historical_variants:
+      - "Fall der Profitrate"
+      - "fallende Profitrate"
+    related_non_equivalent:
+      - "Masse des Profits"
+      - "Masse des Mehrwerts"
+      - "entgegenwirkende Ursachen"
+    supporting_terms:
+      - "organische Zusammensetzung des Kapitals"
+      - "organische Composition des Capitals"
+      - "constantes Capital"
+      - "variables Capital"
+      - "Productivkraft der Arbeit"
+      - "Rate des Mehrwerths"
+      - "Accumulation des Capitals"
+    generic_terms: ["Profitrate", "Kapital", "Arbeit"]
+    target_works: ["Das Kapital, Buch III"]
+    target_volumes: ["II/4.2", "II/4.3", "II/15"]
+    target_topics:
+      - "Gesetz des tendenziellen Falls der Profitrate"
+      - "entgegenwirkende Ursachen"
+    relation_pairs:
+      - ["Fall der Profitrate", "organische Zusammensetzung"]
+      - ["Profitrate fällt", "Productivkraft der Arbeit"]
+      - ["fallende Profitrate", "Masse des Profits"]
+    required_signals:
+      any:
+        - ["Fall der Profitrate", "fallende Profitrate", "Profitrate fällt"]
+    negative_signals:
+      generic_only: ["Profitrate", "Kapital"]
+    research_branches:
+      - id: "profit_rate_countertendencies"
+        type: "counter_evidence"
+        question: "Wie behandelt Marx die entgegenwirkenden Ursachen gegen den Fall der Profitrate?"
+        required_corpus: ["mega"]
+        query_refinement:
+          core_terms:
+            - "entgegenwirkende Ursachen"
+            - "Verwohlfeilerung der Elemente des konstanten Kapitals"
+            - "Herunterdrückung des Arbeitslohns"
+            - "auswärtiger Handel"
+            - "Aktienkapital"
+          supporting_terms:
+            - "Rate des Mehrwerths"
+            - "Umschlag des Kapitals"
+          target_volumes: ["II/4.2", "II/15"]
+          intent: "author_argument"
+
+  - id: capitalist_machinery
+    label: "机器与资本主义应用"
+    triggers:
+      - "机器"
+      - "机械"
+      - "自动化"
+      - "Maschinerie"
+      - "Maschine"
+    intent: concept_relation
+    core_terms:
+      - "Maschinerie"
+      - "Maschine"
+      - "Maschinensystem"
+      - "Maschinenbetrieb"
+    historical_variants:
+      - "Maschinerie"
+      - "Maschine"
+    related_non_equivalent:
+      - "capital fixe"
+      - "fixes Kapital"
+      - "allgemeines gesellschaftliches Wissen"
+      - "Wissenschaft als Productivkraft"
+    supporting_terms:
+      - "relativer Mehrwerth"
+      - "Productivkraft der Arbeit"
+      - "Arbeitsmittel"
+      - "lebendige Arbeit"
+      - "Werthübertragung"
+      - "Ersetzung der Arbeiter"
+      - "Anwendung der Wissenschaft"
+    generic_terms: ["Kapital", "Arbeit", "Productivkraft"]
+    target_works:
+      - "Das Kapital, Buch I: Maschinerie und große Industrie"
+      - "Grundrisse: Fixes Kapital und gesellschaftliches Wissen"
+    target_volumes: ["II/1.2", "II/4.1", "II/5", "II/6", "II/7", "II/8", "II/9", "II/10"]
+    target_topics:
+      - "Maschinerie und große Industrie"
+      - "capital fixe"
+      - "Wissenschaft als gesellschaftliche Produktivkraft"
+    relation_pairs:
+      - ["Maschinerie", "relativer Mehrwerth"]
+      - ["Maschinerie", "lebendige Arbeit"]
+      - ["capital fixe", "allgemeines gesellschaftliches Wissen"]
+    required_signals:
+      any:
+        - ["Maschinerie", "Maschine", "Maschinensystem"]
+    negative_signals:
+      generic_only: ["Kapital", "Arbeit", "Productivkraft"]
+    research_branches:
+      - id: "machinery_value_mediation"
+        type: "concept_bridge"
+        question: "Wie verbindet Marx Maschinerie, relative Mehrwertproduktion, Wertübertragung und die Ersetzung lebendiger Arbeit?"
+        required_corpus: ["mega"]
+        query_refinement:
+          core_terms:
+            - "Maschinerie"
+            - "relativer Mehrwerth"
+            - "Werthübertragung"
+            - "lebendige Arbeit"
+          supporting_terms:
+            - "Productivkraft der Arbeit"
+            - "capital fixe"
+          target_volumes: ["II/1.2", "II/4.1", "II/5", "II/10"]
+          intent: "concept_relation"

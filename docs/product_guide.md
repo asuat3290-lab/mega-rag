@@ -367,6 +367,7 @@ python build_index.py --build --no-embed
 7. 通过版本、缓存、debug 信号和回归测试降低后续修改造成的检索退化；
 8. 把用户观点拆成可检验主张，分别寻找支持、限定和反向证据；
 9. 让外部 Agent 先读取短证据索引，再按 E### 展开少量原文，从而控制 token。
+10. 把复合问题拆成原文重建、概念桥接、反作用因素和外部经验分支，并要求全部必要分支分别达到充分性标准。
 
 它仍不是自动完成文献考证的替代品。正式论文中的引文、页码、作者归属和概念同一性必须经过人工核验。
 
@@ -377,6 +378,8 @@ python build_index.py --build --no-embed
 ```powershell
 cd D:\mega_rag
 python mega_agent.py search "你的研究问题" --detail index --save
+python mega_agent.py research-plan "你的复合研究问题"
+python mega_agent.py research-run "你的复合研究问题" --detail index
 python mega_agent.py verify "你的观点" --budget brief
 python mega_agent.py verify "你的观点" --local-only
 ```
@@ -390,3 +393,5 @@ python mega_agent.py verify "你的观点" --local-only
 对于“主要、总是、仅仅、从未”等强命题，普通 top-k 结果只能提供局部证据，不能证明全语料分布。系统会标记 `partially_answerable`，并建议做词频、对照概念和负样本抽查。
 
 外部 Agent 的推荐方式是：先 `plan`，必要时补充 refinement，再 `search(detail=index)`，最后只展开少量选中的 `E###`。参见 `agent_query_plan.md`。
+
+复合问题应改用 `research-plan` 和 `research-run`。后者会返回每个分支的充分性、claim-evidence matrix、尚缺的外部经验材料，并采用轮转证据预算防止第一个分支占满候选。完整设计见 `docs/research_orchestration.md`。

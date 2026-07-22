@@ -10,11 +10,13 @@ if sys.platform == "win32":
 
 from claim_audit_ui import attach_claim_audit
 from evidence_library_ui import attach_evidence_library
+from research_orchestrator_ui import attach_research_orchestrator
 from webui import CONFIG, build_ui, resolve_api_key
 
 
 def build_workbench():
     app = build_ui()
+    app = attach_research_orchestrator(app)
     app = attach_claim_audit(app)
     return attach_evidence_library(app)
 

@@ -25,13 +25,23 @@ python mega_agent.py status
 
 ## 推荐的低 token 流程
 
+复合问题先做问题级规划：
+
+~~~powershell
+python mega_agent.py research-plan "复合研究问题"
+python mega_agent.py research-run "复合研究问题" --detail index
+~~~
+
+research-plan 检查语义覆盖但不访问索引；research-run 才逐个执行必要 MEGA 分支。默认 local 模式为 0 API token。当代经验分支会保留为 missing requirement，不会被 MEGA 理论片段伪装成现实事实。
+
+
 第一步只取证据索引并保存完整包：
 
 ```powershell
 python mega_agent.py search "马克思如何讨论利润率下降趋势" --top-k 8 --detail index --save
 ```
 
-`index` 只返回引用、层级、可靠性、命中词和短预览。Agent 检查 E###、`verified_author_text`、`locator_verified` 和警告后，再展开少数条目：
+`index` 只返回引用、层级、可靠性、命中词和短预览，并固定 `preview_only=true`、`quote_eligible=false`。Agent 检查 E###、`authorship_status`、`edition_status`、`locator_verified` 和警告后，再展开少数条目：
 
 ```powershell
 python mega_agent.py evidence "D:\mega_rag\research_exports\research_....json" E001 E003 --detail full
@@ -64,7 +74,17 @@ python mega_agent.py verify "你的观点" --budget brief --detail index --save
 ## Python 接口
 
 ```python
-from agent_service import search_agent, verify_agent
+from agent_service import (
+    research_plan_agent, research_run_agent,
+    search_agent, verify_agent,
+)
+
+research_plan = research_plan_agent("复合研究问题")
+research_run = research_run_agent(
+    "复合研究问题",
+    detail="index",
+    max_evidence=12,
+)
 
 evidence_index = search_agent(
     "一般劳动是什么",
@@ -82,7 +102,7 @@ audit = verify_agent(
 )
 ```
 
-这两个函数返回与 CLI 相同的 envelope，适合本机脚本、Codex skill 或 OpenCode tool wrapper。
+这些函数返回与 CLI 相同的 envelope，适合本机脚本、Codex skill 或 OpenCode tool wrapper。
 
 ## 可选 MCP
 
@@ -106,6 +126,8 @@ python D:\mega_rag\mega_mcp.py
 }
 ```
 
+
+复合研究对应 MCP 工具 `mega_research_plan` 和 `mega_research_run`；普通检索继续使用 `mega_plan`、`mega_search` 和 `mega_verify`。
 若 Agent 客户端不支持 MCP，直接调用 JSON CLI 即可，功能不受影响。
 
 ## 故障定位

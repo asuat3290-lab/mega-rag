@@ -7,6 +7,7 @@ import sys
 
 from agent_service import (
     capabilities, plan_agent, register_agent, search_agent, status_agent,
+    research_plan_agent, research_run_agent,
     term_probe_agent, verify_agent,
 )
 
@@ -46,6 +47,48 @@ def mega_plan(query: str, refinement_json: str = "", planner_mode: str = "local"
         planner_mode="agent_supplied" if refinement else planner_mode,
         include_probe=include_probe,
         include_register=include_register,
+    )
+
+
+@mcp.tool()
+def mega_research_plan(
+    query: str,
+    refinement_json: str = "",
+    planner_mode: str = "local",
+) -> dict:
+    """Decompose a compound question into evidence-bounded research branches."""
+    refinement = json.loads(refinement_json) if refinement_json else None
+    return research_plan_agent(
+        query,
+        refinement=refinement,
+        planner_mode="agent_supplied" if refinement else planner_mode,
+    )
+
+
+@mcp.tool()
+def mega_research_run(
+    query: str,
+    top_k_per_branch: int = 5,
+    max_evidence: int = 12,
+    retrieval_mode: str = "original_first",
+    rerank_method: str = "rule",
+    detail: str = "index",
+    save: bool = False,
+    refinement_json: str = "",
+    planner_mode: str = "local",
+) -> dict:
+    """Retrieve all required MEGA branches and expose unresolved external evidence."""
+    refinement = json.loads(refinement_json) if refinement_json else None
+    return research_run_agent(
+        query,
+        top_k_per_branch=top_k_per_branch,
+        max_evidence=max_evidence,
+        retrieval_mode=retrieval_mode,
+        rerank_method=rerank_method,
+        detail=detail,
+        save=save,
+        refinement=refinement,
+        planner_mode="agent_supplied" if refinement else planner_mode,
     )
 
 

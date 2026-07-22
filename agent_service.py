@@ -14,6 +14,8 @@ from claim_schema import AGENT_SCHEMA_VERSION, CLAIM_AUDIT_SCHEMA_VERSION
 from glossary_loader import load_glossary
 from index_version import get_current_version
 from query_plan import build_query_plan, compact_plan
+from research_orchestrator import run_research, write_research_run
+from research_plan import build_research_plan, compact_research_plan
 from sachregister import register_status, search_sachregister
 from term_probe import probe_query_plan
 from research_export import (
@@ -59,11 +61,24 @@ def _compact_evidence(item: dict, detail: str) -> dict:
     provenance = item.get("provenance", {})
     evidence = item.get("evidence", {})
     retrieval = item.get("retrieval", {})
+    source_quote_eligible = bool(provenance.get("source_quote_eligible", False))
+    preview_only = detail == "index"
+    warnings = list(item.get("warnings", []))
+    if preview_only:
+        warnings.append(
+            "Index preview is for evidence selection only; request snippet or full detail before quoting."
+        )
     output = {
         "evidence_id": item.get("evidence_id"),
         "citation": locator.get("citation_stub") or source.get("display_label"),
         "source_collection": source.get("collection"),
         "source_quality": source.get("quality"),
+        "authorship_status": provenance.get("authorship_status"),
+        "edition_status": provenance.get("edition_status"),
+        "attribution_note": provenance.get("attribution_note"),
+        "source_quote_eligible": source_quote_eligible,
+        "preview_only": preview_only,
+        "quote_eligible": bool(source_quote_eligible and not preview_only),
         "text_layer": provenance.get("text_layer"),
         "reliability_class": provenance.get("reliability_class"),
         "verified_author_text": bool(provenance.get("verified_author_text")),
@@ -74,7 +89,7 @@ def _compact_evidence(item: dict, detail: str) -> dict:
         "matched_priority_terms": evidence.get("matched_priority_terms", []),
         "preview": _clip(evidence.get("preview") or evidence.get("german_context"), 360),
         "rough_token_estimate": evidence.get("rough_token_estimate"),
-        "warnings": item.get("warnings", []),
+        "warnings": warnings,
         "retrieval_sources": retrieval.get("sources", []),
         "matched_variants": retrieval.get("matched_variants", []),
         "concept_groups": retrieval.get("concept_groups", []),
@@ -107,6 +122,17 @@ def capabilities() -> dict:
                     "purpose": "build an inspectable German retrieval plan",
                     "modes": ["local", "hybrid", "agent_supplied"],
                     "api_models_used": False,
+                },
+                "research_plan": {
+                    "purpose": "decompose a compound research question by evidence requirement",
+                    "modes": ["local", "hybrid", "agent_supplied"],
+                    "api_models_optional": True,
+                },
+                "research_run": {
+                    "purpose": "retrieve every required MEGA branch and expose unresolved external evidence",
+                    "detail": sorted(DETAIL_LEVELS),
+                    "default_detail": "index",
+                    "api_models_optional": True,
                 },
                 "term_probe": {
                     "purpose": "count exact term coverage before expensive retrieval",
@@ -141,8 +167,12 @@ def capabilities() -> dict:
                 "agent": AGENT_SCHEMA_VERSION,
                 "research_package": EXPORT_SCHEMA_VERSION,
                 "claim_audit": CLAIM_AUDIT_SCHEMA_VERSION,
+                "research_plan": "mega-research-plan-v1",
+                "research_run": "mega-research-run-v1",
             },
             "recommended_agent_flow": [
+                "for compound questions, call research-plan before ordinary search",
+                "call research-run to require adequacy across every MEGA branch",
                 "plan(query) and inspect historical/related/generic roles",
                 "optionally submit a refinement JSON when domain terms are missing",
                 "search(detail=index, save=true)",
@@ -201,6 +231,122 @@ def plan_agent(query: str, *, refinement: dict | None = None,
             "usage": {
                 "api_tokens": int(planner_diagnostics.get("usage", {}).get("total_tokens", 0))
             },
+        },
+    )
+
+
+def _resolve_research_plan(
+    query: str,
+    *,
+    refinement: dict | None = None,
+    planner_mode: str = "local",
+) -> tuple[dict, dict]:
+    if refinement:
+        planner_mode = "agent_supplied"
+    if planner_mode not in {"local", "hybrid", "agent_supplied"}:
+        raise ValueError(f"unsupported planner_mode: {planner_mode}")
+    local_plan = build_research_plan(query)
+    diagnostics = {
+        "mode": planner_mode,
+        "model": None,
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "fallback": False,
+    }
+    if planner_mode == "hybrid":
+        from research_plan_model import build_hybrid_research_plan
+
+        return build_hybrid_research_plan(query, local_plan=local_plan)
+    if planner_mode == "agent_supplied":
+        if not refinement:
+            raise ValueError("agent_supplied planner mode requires refinement")
+        return build_research_plan(
+            query, mode=planner_mode, refinement=refinement
+        ), diagnostics
+    return local_plan, diagnostics
+
+
+def research_plan_agent(
+    query: str,
+    *,
+    refinement: dict | None = None,
+    planner_mode: str = "local",
+) -> dict:
+    """Return question coverage and evidence requirements before retrieval."""
+    plan, diagnostics = _resolve_research_plan(
+        query, refinement=refinement, planner_mode=planner_mode
+    )
+    return _envelope(
+        "research_plan",
+        {
+            "query": query,
+            "research_plan": compact_research_plan(plan),
+            "planner_diagnostics": diagnostics,
+            "usage": {
+                "api_tokens": int(diagnostics.get("usage", {}).get("total_tokens", 0))
+            },
+        },
+    )
+
+
+def research_run_agent(
+    query: str,
+    *,
+    top_k_per_branch: int = 5,
+    max_evidence: int = 12,
+    retrieval_mode: str = "original_first",
+    rerank_method: str = "rule",
+    detail: str = "index",
+    save: bool = False,
+    output_dir: str | Path | None = None,
+    refinement: dict | None = None,
+    planner_mode: str = "local",
+) -> dict:
+    """Run every MEGA branch and return explicit unresolved evidence requirements."""
+    detail = _validate_detail(detail)
+    plan, diagnostics = _resolve_research_plan(
+        query, refinement=refinement, planner_mode=planner_mode
+    )
+    run = run_research(
+        query,
+        research_plan=plan,
+        top_k_per_branch=top_k_per_branch,
+        max_evidence=max_evidence,
+        retrieval_mode=retrieval_mode,
+        rerank_method=rerank_method,
+    )
+    artifact_path = None
+    if save:
+        directory = (
+            Path(output_dir)
+            if output_dir
+            else Path(
+                CONFIG.get("paths", {}).get("research_exports")
+                or SCRIPT_DIR / "research_exports"
+            )
+        )
+        artifact_path = write_research_run(run, output_dir=directory)
+    returned_evidence = [
+        _compact_evidence(item, detail) for item in run.get("evidence", [])
+    ]
+    usage = dict(run.get("usage", {}))
+    usage["api_tokens"] = int(diagnostics.get("usage", {}).get("total_tokens", 0))
+    usage["planner"] = diagnostics
+    usage["rough_returned_evidence_tokens"] = _rough_json_tokens(returned_evidence)
+    return _envelope(
+        "research_run",
+        {
+            "index_version": run.get("index_version"),
+            "run_id": run.get("run_id"),
+            "question": query,
+            "research_plan": run.get("research_plan"),
+            "status": run.get("status"),
+            "branches": run.get("branches", []),
+            "claim_evidence_matrix": run.get("claim_evidence_matrix", []),
+            "detail": detail,
+            "evidence": returned_evidence,
+            "usage": usage,
+            "warnings": run.get("warnings", []),
+            "artifact_paths": {"json": artifact_path},
         },
     )
 

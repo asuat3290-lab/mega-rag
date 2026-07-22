@@ -38,6 +38,75 @@ terms:
   商品: "Waare Ware Waarenform"
   货币: "Geld Geldform Gold Silber"
   利润: "Profit Profitrate Durchschnittsprofit"
+  利润率:
+    type: concept
+    priority: high
+    de:
+      - "Profitrate"
+      - "Rate des Profits"
+      - "allgemeine Profitrate"
+  资本有机构成:
+    type: concept
+    priority: high
+    de:
+      - "organische Zusammensetzung des Kapitals"
+      - "organische Composition des Capitals"
+      - "Werthzusammensetzung des Kapitals"
+      - "technische Zusammensetzung des Kapitals"
+  不变资本:
+    type: concept
+    de:
+      - "konstantes Kapital"
+      - "constantes Capital"
+      - "konstanter Kapitalteil"
+  可变资本:
+    type: concept
+    de:
+      - "variables Kapital"
+      - "variables Capital"
+      - "variabler Kapitalteil"
+  固定资本:
+    type: concept
+    de:
+      - "fixes Kapital"
+      - "capital fixe"
+      - "fixes Capital"
+  相对剩余价值:
+    type: concept
+    de:
+      - "relativer Mehrwert"
+      - "relativer Mehrwerth"
+      - "relative Surplusvalue"
+  机器:
+    type: concept
+    priority: high
+    query_mode: [exact, semantic]
+    must_search_exact: true
+    de:
+      - "Maschinerie"
+      - "Maschine"
+      - "Maschinensystem"
+      - "Maschinenbetrieb"
+  机械:
+    type: concept
+    de:
+      - "Maschinerie"
+      - "Maschine"
+      - "mechanisch"
+  一般智力:
+    type: concept
+    de:
+      - "general intellect"
+      - "allgemeines gesellschaftliches Wissen"
+      - "allgemeine gesellschaftliche Arbeit"
+      - "Wissenschaft als Productivkraft"
+    related: ["固定资本", "科学", "社会知识"]
+  反作用因素:
+    type: concept
+    de:
+      - "entgegenwirkende Ursachen"
+      - "entgegenwirkende Einflüsse"
+      - "Verwohlfeilerung der Elemente des konstanten Kapitals"
   利润率下降:
     type: concept
     priority: high

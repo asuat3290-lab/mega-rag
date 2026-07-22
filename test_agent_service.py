@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent_service import evidence_from_package, search_agent
+from research_export import serialize_evidence
 
 
 def _retrieval_payload():
@@ -60,6 +61,11 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(evidence["verified_author_text"])
         self.assertNotIn("german_context", evidence)
         self.assertIn("fallende Profitrate", evidence["preview"])
+        self.assertTrue(evidence["preview_only"])
+        self.assertFalse(evidence["quote_eligible"])
+        self.assertTrue(evidence["source_quote_eligible"])
+        self.assertEqual(evidence["authorship_status"], "author_text_layer")
+        self.assertTrue(any("selection only" in value for value in evidence["warnings"]))
 
     def test_saved_package_supports_selective_expansion(self):
         payload = _retrieval_payload()
@@ -75,6 +81,33 @@ class AgentServiceTests(unittest.TestCase):
                     "fallende Profitrate",
                     expanded["evidence"][0]["evidence"]["german_context"],
                 )
+                full_item = expanded["evidence"][0]
+                self.assertTrue(full_item["evidence"]["quote_eligible"])
+                self.assertEqual(full_item["provenance"]["edition_status"], "critical_edition_text")
+
+    def test_edition_status_distinguishes_manuscript_and_print_text(self):
+        record = dict(_retrieval_payload()["results"][0])
+        record["source_title"] = "Das Kapital, Druckfassung 1894"
+        printed = serialize_evidence(record, 1, ["Profitrate"])
+        self.assertEqual(
+            printed["provenance"]["edition_status"], "edited_print_edition"
+        )
+
+        record["source_title"] = "Oekonomisches Manuskript 1863-1865"
+        manuscript = serialize_evidence(record, 1, ["Profitrate"])
+        self.assertEqual(
+            manuscript["provenance"]["edition_status"], "manuscript_or_draft_edition"
+        )
+
+    def test_editorial_material_is_never_quote_eligible(self):
+        record = dict(_retrieval_payload()["results"][0])
+        record["type"] = "APPARAT"
+        record["text_layer"] = "apparatus"
+        editorial = serialize_evidence(record, 1, ["Profitrate"])
+        self.assertEqual(
+            editorial["provenance"]["authorship_status"], "editorial_apparatus"
+        )
+        self.assertFalse(editorial["evidence"]["quote_eligible"])
 
     def test_missing_evidence_id_is_reported(self):
         with tempfile.TemporaryDirectory() as directory:
