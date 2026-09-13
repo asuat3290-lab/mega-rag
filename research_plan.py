@@ -21,6 +21,7 @@ from query_plan import (
     compact_plan,
     compute_planner_version,
     load_query_rules,
+    merge_query_plan,
 )
 
 
@@ -69,6 +70,11 @@ _BRIDGE_MARKERS = (
     "关系", "联系", "结合", "如何用", "怎样用", "怎么用", "借助", "说明",
     "中介", "relation", "zusammenhang",
 )
+_ANAPHORIC_MARKERS = (
+    "这一", "这个", "该", "上述", "这种", "这些", "前者", "后者",
+    "马克思自己的", "其", "它", "this", "that", "these", "such",
+    "the former", "the latter", "dies", "diese", "dieser", "deren",
+)
 
 # These phrases express the form of a question rather than a research concept.
 _QUESTION_FRAMES = (
@@ -80,7 +86,21 @@ _QUESTION_FRAMES = (
     "会不会", "会", "怎样", "如何", "怎么", "为什么", "什么", "哪些", "何时",
     "如今的", "当代的", "现代的", "当前的", "如今", "当代", "现代", "当前",
     "降低", "提高", "影响", "发生", "形成", "表现", "来看", "中的", "中", "的",
+    "\u53d8\u5316", "\u6f14\u53d8", "\u53d1\u5c55\u8fc7\u7a0b",
+
 )
+
+
+def _remove_question_frames(text: str) -> str:
+    """Remove multi-character framing without altering unknown concepts."""
+    output = text
+    phrases = {
+        phrase for phrase in _QUESTION_FRAMES
+        if len(normalize_key(phrase)) >= 2
+    }
+    for phrase in sorted(phrases, key=len, reverse=True):
+        output = output.replace(phrase, " ")
+    return output
 
 
 def _dedupe(values: list[Any]) -> list[Any]:
@@ -184,8 +204,7 @@ def _meaningful_residue(
     ]
     for value in sorted(_dedupe(removable), key=lambda item: len(str(item)), reverse=True):
         residue = re.sub(re.escape(str(value)), " ", residue, flags=re.I)
-    for phrase in sorted(_QUESTION_FRAMES, key=len, reverse=True):
-        residue = residue.replace(phrase, " ")
+    residue = _remove_question_frames(residue)
     residue = re.sub(r"[\s\W_\d]+", " ", residue, flags=re.UNICODE).strip()
 
     output = []
@@ -261,8 +280,79 @@ def _compact_subquery_plan(plan: dict) -> dict:
         "target_volumes": list(plan.get("target_volumes", []))[:12],
         "target_topics": list(plan.get("target_topics", []))[:8],
         "matched_rule_ids": list(plan.get("matched_rule_ids", [])),
+        "qualification_groups": list(plan.get("qualification_groups", []))[:12],
+        "plan_status": deepcopy(plan.get("plan_status", {})),
         "warnings": list(plan.get("warnings", [])),
     }
+
+
+def _parent_context_refinement(
+    clause: str,
+    local_plan: dict,
+    parent_plan: dict,
+) -> tuple[dict | None, dict]:
+    """Carry explicit whole-question scope into elliptical child branches."""
+    refinement: dict[str, Any] = {}
+    inherited: dict[str, Any] = {
+        "source": "parent_question",
+        "target_works": [],
+        "target_volumes": [],
+        "target_topics": [],
+        "context_terms": [],
+        "qualification_group_ids": [],
+    }
+    for field in ("target_works", "target_volumes", "target_topics"):
+        if local_plan.get(field) or not parent_plan.get(field):
+            continue
+        values = deepcopy(parent_plan.get(field, []))
+        refinement[field] = values
+        inherited[field] = values
+
+    context_dependent = _contains_any(clause, _ANAPHORIC_MARKERS) or not (
+        local_plan.get("core_terms") or local_plan.get("historical_variants")
+    )
+    if context_dependent:
+        local_term_keys = {
+            normalize_key(value)
+            for field in (
+                "core_terms", "historical_variants", "related_non_equivalent",
+                "supporting_terms", "generic_terms",
+            )
+            for value in local_plan.get(field, [])
+        }
+        context_terms = _dedupe(
+            value for value in (
+                list(parent_plan.get("core_terms", []))
+                + list(parent_plan.get("historical_variants", []))
+                + list(parent_plan.get("supporting_terms", []))
+            ) if normalize_key(value) not in local_term_keys
+        )
+        if context_terms:
+            refinement["context_terms"] = context_terms
+            inherited["context_terms"] = context_terms
+
+        discriminating_groups = []
+        for group in parent_plan.get("qualification_groups", []):
+            alternatives = list(group.get("alternatives", []))
+            if not alternatives:
+                continue
+            if not group.get("required_for_evidence") and str(group.get("match_mode") or "any") != "all_near":
+                continue
+            copied = deepcopy(group)
+            copied["required_for_evidence"] = True
+            copied["source"] = "parent_context"
+            discriminating_groups.append(copied)
+        if discriminating_groups:
+            refinement["qualification_groups"] = discriminating_groups
+            inherited["qualification_group_ids"] = [
+                group.get("id") for group in discriminating_groups
+            ]
+
+    inherited = {
+        key: value for key, value in inherited.items()
+        if key == "source" or value
+    }
+    return (refinement or None), inherited
 
 
 
@@ -352,6 +442,9 @@ def build_research_plan(
     rules = rules or load_query_rules()
     clauses = split_research_question(question)
     overall_type = _question_type(question, clauses)
+    parent_query_plan = build_query_plan(
+        question, glossary=glossary, rules=rules
+    )
     subquestions = []
     covered_all: list[str] = []
     external_all: list[str] = []
@@ -360,6 +453,13 @@ def build_research_plan(
 
     for index, clause in enumerate(clauses, start=1):
         query_plan = build_query_plan(clause, glossary=glossary, rules=rules)
+        inherited_refinement, inherited_context = _parent_context_refinement(
+            clause, query_plan, parent_query_plan
+        )
+        if inherited_refinement:
+            query_plan = merge_query_plan(
+                query_plan, inherited_refinement, source="parent_context"
+            )
         matched_rules = _matched_rules_for_clause(clause, rules)
         source_concepts = _source_concepts(clause, query_plan, matched_rules)
         external = _external_concepts(clause)
@@ -380,7 +480,8 @@ def build_research_plan(
             "required_corpus": required_corpus,
             "required_evidence": _evidence_requirement(sub_type),
             "query_intent": query_plan.get("routing_intent", "author_argument"),
-            "query_refinement": None,
+            "query_refinement": inherited_refinement,
+            "inherited_context": inherited_context,
             "query_plan": _compact_subquery_plan(query_plan),
         })
         covered_all.extend(source_concepts)
@@ -533,6 +634,23 @@ def merge_research_plan(plan: dict, refinement: dict, *, source: str = "agent_su
         "external_empirical" in item.get("required_corpus", [])
         for item in output["subquestions"]
     )
+    unmapped_warning = (
+        "Meaningful concepts remain unmapped; use agent refinement or bounded "
+        "hybrid planning."
+    )
+    external_warning = (
+        "The contemporary/empirical part cannot be established from MEGA "
+        "evidence alone."
+    )
+    warnings = [
+        value for value in output.get("warnings", [])
+        if value not in {unmapped_warning, external_warning}
+    ]
+    if output["unmapped_concepts"]:
+        warnings.append(unmapped_warning)
+    if output["external_evidence_required"]:
+        warnings.append(external_warning)
+    output["warnings"] = _dedupe(warnings)
     digest = hashlib.sha256(
         json.dumps(refinement, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()[:10]

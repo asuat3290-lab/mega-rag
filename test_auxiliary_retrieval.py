@@ -71,6 +71,16 @@ class AuxiliaryRetrievalTests(unittest.TestCase):
         self.assertEqual(item["text_pages"], 1)
         self.assertEqual(item["apparat_pages"], 1)
 
+    def test_term_probe_reports_union_separately_from_per_term_sum(self):
+        result = probe_terms(
+            ["Concentration", "Akkumulation"], db_path=self.source
+        )
+        summary = result["summary"]
+        self.assertEqual(summary["summed_term_page_hits"], 3)
+        self.assertEqual(summary["unique_page_hits"], 2)
+        self.assertEqual(summary["total_page_hits"], 2)
+        self.assertEqual(summary["overlap_page_hits"], 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

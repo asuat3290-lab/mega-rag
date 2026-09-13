@@ -228,8 +228,13 @@ def search_sachregister(terms: list[str], *, top_k: int = 12,
         clauses = []
         for volume in scoped:
             if volume.get("band"):
-                clauses.append("(p.abteilung=? AND p.band=?)")
-                params.extend([volume["abteilung"], str(volume["band"])])
+                band = str(volume["band"])
+                if "." in band:
+                    clauses.append("(p.abteilung=? AND p.band=?)")
+                    params.extend([volume["abteilung"], band])
+                else:
+                    clauses.append("(p.abteilung=? AND (p.band=? OR p.band LIKE ?))")
+                    params.extend([volume["abteilung"], band, band + ".%"])
             else:
                 clauses.append("p.abteilung=?")
                 params.append(volume["abteilung"])

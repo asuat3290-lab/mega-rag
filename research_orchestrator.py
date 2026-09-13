@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,10 +88,104 @@ def _allowed_use(subquestion_type: str) -> str:
     }.get(subquestion_type, "Use only within the stated evidence boundary.")
 
 
-def _select_records(results: list[dict], limit: int) -> list[dict]:
-    eligible = [record for record in results if record.get("evidence_eligible")]
-    ineligible = [record for record in results if not record.get("evidence_eligible")]
-    return (eligible + ineligible)[:limit]
+_EVIDENCE_CUE_PATTERNS = {
+    "definition_or_distinction": (
+        r"\b(?:definition|bestimmung|unterscheidung|bezeichnet|bedeutet|hei(?:ss|ß)t)\b",
+        r"\bwird\b.{0,100}\bbestimmt\b",
+        r"\bnicht\b.{0,180}\bsondern\b",
+        r"\bnur\b.{0,180}\bist\b",
+        r"\bbesteht\b.{0,140}\bin\b",
+    ),
+    "relation_or_architecture": (
+        r"\b(?:zusammenhang|verh[aä]ltnis|voraussetzung|resultat|bedingt|vermittelt)\b",
+        r"\b(?:daher|folglich|also)\b",
+    ),
+    "diachronic": (
+        r"\b(?:fr[uü]her|sp[aä]ter|zun[aä]chst|entwicklung|entwickelt|ver[aä]ndert)\b",
+        r"\b(?:heft|entwurf|fassung|manuskript)\b",
+    ),
+}
+
+
+def _selection_cue_family(subquestion: dict | None) -> str:
+    question = str((subquestion or {}).get("question") or "").casefold()
+    sub_type = str((subquestion or {}).get("type") or "")
+    if sub_type == "diachronic_comparison" or any(
+        marker in question for marker in (
+            "变化", "演变", "发展", "早期", "晚期", "时期", "diachron", "entwicklung"
+        )
+    ):
+        return "diachronic"
+    if sub_type in {"concept_relation", "concept_bridge"} or any(
+        marker in question for marker in (
+            "关系", "联系", "架构", "整体", "地位", "作用", "zusammenhang", "verhältnis"
+        )
+    ):
+        return "relation_or_architecture"
+    if sub_type == "textual_reconstruction" or any(
+        marker in question for marker in (
+            "是什么", "如何批判", "怎么批判", "区别", "区分", "规定", "定义", "概念",
+            "what is", "definition", "distinguish", "critique"
+        )
+    ):
+        return "definition_or_distinction"
+    return "general"
+
+
+def _select_records(
+    results: list[dict],
+    limit: int,
+    subquestion: dict | None = None,
+) -> list[dict]:
+    """Select claim-bearing passages, not merely the first high-scoring pages."""
+    cue_family = _selection_cue_family(subquestion)
+    patterns = _EVIDENCE_CUE_PATTERNS.get(cue_family, ())
+    ranked = []
+    for index, record in enumerate(results):
+        qualification = record.get("_qualification", {})
+        text = str(record.get("text") or record.get("display_snippet") or "")
+        cue_hits = [pattern for pattern in patterns if re.search(pattern, text, re.I | re.S)]
+        direct_count = len(qualification.get("direct_core_hits", []))
+        claim_eligible = bool(
+            qualification.get(
+                "claim_eligible",
+                record.get("claim_eligible", record.get("evidence_eligible")),
+            )
+        )
+        claim_ready = bool(
+            qualification.get("claim_ready", record.get("claim_ready"))
+        )
+        target_match = bool(
+            qualification.get("target_scope_match", True)
+        )
+        selection_debug = {
+            "cue_family": cue_family,
+            "cue_hits": cue_hits,
+            "cue_hit_count": len(cue_hits),
+            "direct_core_hit_count": direct_count,
+            "claim_eligible": claim_eligible,
+            "claim_ready": claim_ready,
+            "target_scope_match": target_match,
+            "rank_before_selection": index + 1,
+        }
+        record.setdefault("_debug", {})["evidence_selection"] = selection_debug
+        key = (
+            0 if claim_eligible else 1,
+            0 if direct_count else 1,
+            0 if claim_ready else 1,
+            -len(cue_hits),
+            -direct_count,
+            0 if target_match else 1,
+            int(qualification.get("qualification_bucket", 99)),
+            index,
+        )
+        ranked.append((key, record))
+    selected = [record for _, record in sorted(ranked, key=lambda item: item[0])[:limit]]
+    for index, record in enumerate(selected, start=1):
+        record.setdefault("_debug", {}).setdefault("evidence_selection", {})[
+            "rank_after_selection"
+        ] = index
+    return selected
 
 def _fair_evidence_keys(branch_rows: list[dict], limit: int) -> list[str]:
     """Allocate evidence round-robin so early branches cannot exhaust the budget."""
@@ -180,7 +275,7 @@ def run_research(
                 payload = retriever(
                     subquestion.get("question") or question,
                     route=_branch_route(subquestion),
-                    top_k=top_k_per_branch,
+                    top_k=max(12, top_k_per_branch * 3),
                     retrieval_mode=retrieval_mode,
                     rerank_method=rerank_method,
                     intent_override=subquestion.get("query_intent"),
@@ -199,7 +294,9 @@ def run_research(
                         payload.get("retrieval", {}).get("navigation", {}).get("sachregister", [])
                     ),
                 }
-                selected = _select_records(payload.get("results", []), top_k_per_branch)
+                selected = _select_records(
+                    payload.get("results", []), top_k_per_branch, subquestion
+                )
                 priority_terms = payload.get("query", {}).get("priority_terms", [])
                 for record in selected:
                     item = serialize_evidence(record, 0, priority_terms)
@@ -308,11 +405,15 @@ def run_research(
         item["package_evidence_ref"] = package_evidence_ref(
             run_id, item["evidence_id"]
         )
-        item["evidence_role"] = (
-            "qualified_evidence"
-            if item.get("provenance", {}).get("evidence_eligible")
-            else "provisional_candidate"
-        )
+        provenance = item.get("provenance", {})
+        if provenance.get("claim_ready"):
+            item["evidence_role"] = "claim_ready_evidence"
+        elif provenance.get("claim_eligible"):
+            item["evidence_role"] = "provisional_claim_evidence"
+        elif provenance.get("evidence_eligible"):
+            item["evidence_role"] = "out_of_scope_or_context_evidence"
+        else:
+            item["evidence_role"] = "provisional_candidate"
         id_to_uid[item["evidence_id"]] = item.get("evidence_uid")
     for row in claim_matrix:
         row["evidence_uids"] = [
@@ -341,6 +442,8 @@ def run_research(
         "evidence": evidence,
         "usage": {
             "api_tokens": 0,
+            "workbench_api_tokens": 0,
+            "agent_model_tokens": None,
             "rough_selected_evidence_tokens": rough_tokens,
             "selected_evidence_count": len(evidence),
         },

@@ -118,7 +118,8 @@ def normalize_record(record: dict[str, Any], source_path: Path) -> dict[str, Any
         "page": page,
         "is_main_text": 1,
         "is_editorial_comment": 0,
-        "language": str(record.get("language") or "de"),
+        # Do not infer a language when the upstream record omitted it.
+        "language": str(record.get("language") or "unknown"),
         "chunk_text": text,
         "char_count": len(text),
         "source_file": source_path.name,
@@ -273,19 +274,28 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument("--include-unmapped", action="store_true", help="Import records without a recognized MEGA volume id" )
     parser.add_argument("--manifest", default="D:/mega_rag/megadigital_import_manifest.json")
+    parser.add_argument("--skip-source-catalog", action="store_true", help="Skip derived source catalog refresh")
     args = parser.parse_args()
 
     report = import_records(
         Path(args.source), Path(args.metadata_db), args.dry_run,
         max(1, args.batch_size), args.include_unmapped,
     )
-    print(json.dumps(report, ensure_ascii=False, indent=2))
     if not args.dry_run:
         manifest = Path(args.manifest)
         manifest.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         from index_version import store_version
         report["index_version"] = store_version("megadigital_import")
+        if not args.skip_source_catalog:
+            try:
+                from source_catalog import refresh_source_catalog_if_needed
+                report["source_catalog"] = refresh_source_catalog_if_needed(
+                    Path(args.metadata_db)
+                )
+            except Exception as exc:
+                report["source_catalog_error"] = f"{type(exc).__name__}: {exc}"
         manifest.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
 

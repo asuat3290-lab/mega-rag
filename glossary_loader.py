@@ -23,6 +23,54 @@ def normalize_key(value: str) -> str:
     return unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
 
 
+def _is_latin_word_char(value: str) -> bool:
+    """Return whether a character can continue a Latin-script word."""
+    if not value:
+        return False
+    return value.isdigit() or unicodedata.name(value, "").startswith("LATIN")
+
+
+def _iter_term_spans(text: str, term: str):
+    """Yield matches, enforcing word boundaries for Latin/German terms.
+
+    Chinese concepts can occur inside a longer Chinese question, while a
+    source-language term such as ``Verkehr`` must not match ``Verkehrung``.
+    """
+    if not term:
+        return
+    offset = 0
+    while True:
+        start = text.find(term, offset)
+        if start < 0:
+            return
+        end = start + len(term)
+        left_ok = (
+            not _is_latin_word_char(term[0])
+            or start == 0
+            or not _is_latin_word_char(text[start - 1])
+        )
+        right_ok = (
+            not _is_latin_word_char(term[-1])
+            or end == len(text)
+            or not _is_latin_word_char(text[end])
+        )
+        if left_ok and right_ok:
+            yield start, end
+        offset = start + 1
+
+
+def _remove_boilerplate_phrases(text: str) -> str:
+    """Remove multi-character query framing without damaging concepts."""
+    output = text
+    phrases = {
+        phrase for phrase in _QUERY_BOILERPLATE
+        if len(normalize_key(phrase)) >= 2
+    }
+    for phrase in sorted(phrases, key=len, reverse=True):
+        output = output.replace(phrase, " ")
+    return output
+
+
 def _as_list(value) -> list:
     if value is None:
         return []
@@ -232,8 +280,7 @@ def needs_model_expansion(question: str, matched_terms: list,
         removable.extend([term] + list(entry.get("aliases", [])))
     for term in sorted(set(removable), key=len, reverse=True):
         residual = re.sub(re.escape(term), " ", residual, flags=re.IGNORECASE)
-    for phrase in _QUERY_BOILERPLATE:
-        residual = residual.replace(phrase, " ")
+    residual = _remove_boilerplate_phrases(residual)
     residual = re.sub(r"[\s\W_]+", "", residual, flags=re.UNICODE)
     cjk = "".join(re.findall(r"[\u3400-\u9fff]", residual))
     return len(cjk) >= 2, cjk
@@ -297,10 +344,9 @@ def expand_with_glossary(question: str, glossary: dict = None) -> tuple:
         )
         for matched_name in names:
             normalized_term = normalize_key(matched_name)
-            start = normalized_question.find(normalized_term)
-            if start >= 0:
+            for start, end in _iter_term_spans(normalized_question, normalized_term):
                 candidates.append((
-                    start, start + len(normalized_term), cn_term, entry, matched_name
+                    start, end, cn_term, entry, matched_name
                 ))
 
     selected = []

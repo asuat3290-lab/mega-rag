@@ -54,7 +54,7 @@ python test_evidence_library.py
 
 ## 专家型 QueryPlan 与 Agent 接口
 
-研究型检索现在先生成结构化 QueryPlan，再进入全局检索、目标卷注入、Sachregister 导航、候选资格判定和证据输出。默认 `local` 模式不调用 API；只有显式启用 `--hybrid` 时才用 Flash 对检索计划做受约束的补充。
+研究型检索现在先生成结构化 QueryPlan，再进入全局检索、目标卷注入、Sachregister 导航、候选资格判定和证据输出。默认 `local` 模式不调用 API；`--hybrid` 会显式使用 Flash，`--auto` 则只在本地计划不足且没有已晋升规划记忆时使用 Flash。
 
 ```powershell
 cd D:\mega_rag
@@ -96,3 +96,87 @@ python mega_agent.py report-check report.json research_run_xxx.json
 ```
 
 A closed synthesis gate means the output is a diagnostic candidate package, not a basis for a positive answer. See [docs/evidence_report_contract.md](docs/evidence_report_contract.md) and [AGENTS.md](AGENTS.md).
+
+## Agent-first 与安全学习
+
+简单查询继续使用 local 模式，复杂问题可由外部 Agent 提交结构化 refinement，或使用 `--auto` 按需调用 Flash：
+
+```powershell
+python mega_agent.py plan "Subsumtion Hegelschen Rechtsphilosophie" --auto --no-probe --no-register
+python mega_agent.py research-plan "马克思某一概念的含义变化" --auto
+python mega_agent.py memory-status
+python mega_agent.py memory-list --status proposed
+```
+
+系统不会把模型输出自动写成正式术语知识。新计划必须经过本地语料验证和人工晋升后，才会被后续 `--auto` 查询复用。完整规则见 [docs/expert_retrieval_architecture.md](docs/expert_retrieval_architecture.md) 和 [docs/agent_integration.md](docs/agent_integration.md)。
+
+## 来源目录与版本关系
+
+来源目录将 OCR 文件夹、MEGAdigital 文档、MEGA 卷册范围和经人工声明的版本关系分开保存：
+
+```powershell
+python mega_agent.py source-catalog-build
+python mega_agent.py source-catalog-status
+python mega_agent.py source-catalog-list --abteilung II --band 5
+python mega_agent.py source-catalog-show SOURCE_ID
+```
+
+检索结果会携带稳定 `source_id`、`edition_status`、版本组和来源关系。目录只增加身份与解释边界，不改变 BM25、向量召回或 rerank 分数。详细说明见 `docs/source_catalog.md`。
+
+覆盖与词项调查也复用这两条本地只读链路：
+
+```powershell
+python mega_agent.py source-catalog-coverage --work "Das Kapital" --language de --page-size 20
+python mega_agent.py term-probe "Arbeit" --page 1 --page-size 50 --language de --export probe.json
+```
+
+覆盖输出区分作品/版本/卷次、语言、TEXT/APPARAT 和索引记录数，并保留
+`unknown`/`mixed` 与完整性未评估状态。词项输出区分
+`exact_phrase`、`lexical_variant`、`semantic_related`，保留原文命中、稳定
+ID、版本和分页；无命中不等于语料不存在。上述命令不运行检索评测、不调用
+模型，也不补建向量。
+
+## Agent focus and protocol audit
+
+External agents can keep free-form exploration while declaring only the evidence-critical parts of a query:
+
+```powershell
+python mega_agent.py search "Stoffwechsel Natur Arbeit Boden" `
+  --focus Stoffwechsel --context "Natur,Arbeit,Boden" `
+  --volumes "II/1,II/5,II/6" --intent author_argument `
+  --trace-id paper-ch3 --detail index
+python mega_agent.py protocol-report paper-ch3
+```
+
+`--focus` is required in qualified evidence; `--context` is recall-only; `--volumes` is a soft scope. Tracing is optional and advisory. Search automatically consults Sachregister, while synthesis and quotation safety remain fail-closed. See [docs/agent_research_protocol.md](docs/agent_research_protocol.md).
+
+Run the focused regressions after changing planning, qualification, scope propagation, CLI/MCP plumbing, or tracing:
+
+```powershell
+python -B -m unittest test_agent_focus_flow test_agent_hint_plumbing test_query_scope_profile test_protocol_trace -v
+```
+## Agent 正式研究会话
+
+自由检索适合探索；正式交付使用可恢复的状态机：
+
+```powershell
+python mega_agent.py research-session start "研究问题"
+python mega_agent.py research-session continue SESSION_ID --focus "核心词" --volumes "II/1"
+python mega_agent.py research-session expand SESSION_ID E001 --detail full
+python mega_agent.py research-session finalize SESSION_ID --report report.json
+```
+
+只有 `COMPLETE` 状态会签发完成凭证。关机后用 `research-session status SESSION_ID` 继续。详见 [docs/formal_research_sessions.md](docs/formal_research_sessions.md)。
+
+### 正式研究的当前约束
+
+复合问题应在 `research-plan` 后按子问题分别提交 `query_refinement`；Agent 显式指定的 `intent`、核心德语词和目标卷会进入可审计计划，现代 `k` 拼写还会有限补入 MEGA 常见的历史 `c` 拼写。每个可回答分支都必须在当前 artifact revision 中展开并引用自己的证据。`claim_eligible` 仅表示可以进行有限分析，不等于 `quote_eligible`；全部证据为未核验 OCR 时会返回来源披露警告。
+
+门禁关闭或会话继续被阻止时 CLI 返回退出码 `5`。工作台报告的 `api_tokens=0` 只表示工作台未调用外部 API，不包含 Codex、OpenCode、Qoder 等调用 Agent 自身的 token。
+
+修改规划、检索资格、分支编排、来源层或正式会话代码后运行：
+
+```powershell
+python -B -m unittest discover -p "test_*.py"
+python -B test_retrieval_regression.py
+```

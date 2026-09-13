@@ -12,6 +12,8 @@ from pathlib import Path
 
 import yaml
 
+from cache import cache_get, cache_put, make_cache_key
+from index_version import get_current_version
 from model_gateway import call_json, empty_usage
 from query_plan import build_query_plan, compact_plan, merge_query_plan
 from sachregister import search_sachregister
@@ -21,6 +23,23 @@ from term_probe import probe_query_plan
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG = yaml.safe_load((BASE_DIR / "config.yaml").read_text(encoding="utf-8"))
 HYBRID_PROMPT_VERSION = "query-plan-refiner-v1"
+
+
+def _planner_cache_key(question: str, local_plan: dict) -> tuple[str, str]:
+    model_name = str(CONFIG["models"]["flash"].get("model") or "")
+    prompt_version = (
+        f"{HYBRID_PROMPT_VERSION}:{local_plan.get('planner_version', '')}"
+    )
+    key = make_cache_key(
+        question,
+        filters="query_plan_refinement",
+        top_k=0,
+        mode="hybrid",
+        index_version=str(get_current_version() or ""),
+        prompt_version=prompt_version,
+        model=model_name,
+    )
+    return key, model_name
 
 
 def _prompt(question: str, local_plan: dict, probe: dict, register: dict) -> str:
@@ -61,15 +80,46 @@ Allowed JSON fields:
   "target_volumes": [],
   "target_topics": [],
   "relation_pairs": [],
+  "qualification_groups": [
+    {
+      "id": "",
+      "alternatives": [],
+      "match_mode": "any",
+      "window_chars": 220,
+      "required_for_evidence": false
+    }
+  ],
   "intent": ""
 }
 
 Input:\n""" + json.dumps(payload, ensure_ascii=False)
 
 
-def build_hybrid_plan(question: str, *, local_plan: dict | None = None) -> tuple[dict, dict]:
+def build_hybrid_plan(
+    question: str,
+    *,
+    local_plan: dict | None = None,
+    use_cache: bool = True,
+) -> tuple[dict, dict]:
     """Return a validated hybrid plan plus exact API usage diagnostics."""
     local_plan = local_plan or build_query_plan(question)
+    cache_key, configured_model = _planner_cache_key(question, local_plan)
+    if use_cache:
+        cached = cache_get(cache_key)
+        if cached:
+            try:
+                raw = json.loads(cached)
+                refined = merge_query_plan(local_plan, raw, source="hybrid_cache")
+                return refined, {
+                    "mode": "hybrid_cache",
+                    "model": configured_model,
+                    "usage": empty_usage(),
+                    "prompt_version": HYBRID_PROMPT_VERSION,
+                    "fallback": False,
+                    "cache_hit": True,
+                }
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
     terms = (
         local_plan.get("core_terms", []) + local_plan.get("historical_variants", [])
         + local_plan.get("related_non_equivalent", [])
@@ -86,9 +136,19 @@ def build_hybrid_plan(question: str, *, local_plan: dict | None = None) -> tuple
             temperature=0.0,
         )
         refined = merge_query_plan(local_plan, raw, source="hybrid")
+        if use_cache:
+            cache_put(
+                cache_key,
+                "query_plan_refinement",
+                raw,
+                index_version=str(get_current_version() or ""),
+                prompt_version=HYBRID_PROMPT_VERSION,
+                model=model,
+            )
         return refined, {
             "mode": "hybrid", "model": model, "usage": usage,
             "prompt_version": HYBRID_PROMPT_VERSION, "fallback": False,
+            "cache_hit": False,
         }
     except Exception as exc:
         fallback = dict(local_plan)
@@ -99,5 +159,6 @@ def build_hybrid_plan(question: str, *, local_plan: dict | None = None) -> tuple
         return fallback, {
             "mode": "hybrid_fallback_local", "model": None,
             "usage": empty_usage(), "prompt_version": HYBRID_PROMPT_VERSION,
-            "fallback": True, "error": f"{type(exc).__name__}: {exc}",
+            "fallback": True, "cache_hit": False,
+            "error": f"{type(exc).__name__}: {exc}",
         }

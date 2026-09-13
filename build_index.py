@@ -85,7 +85,9 @@ def parse_metadata(txt_path: Path):
         "page": page_num,
         "is_main_text": doc_type == "TEXT",
         "is_editorial_comment": doc_type == "APPARAT",
-        "language": "de",
+        # The OCR path does not carry a language declaration. Preserve that
+        # uncertainty instead of treating every newly indexed row as German.
+        "language": "unknown",
         "chunk_text": text,
         "char_count": len(text),
         "source_file": parts[-2] if len(parts) >= 2 else "unknown",
@@ -121,7 +123,7 @@ def init_metadata_db():
             page INTEGER,
             is_main_text INTEGER DEFAULT 0,
             is_editorial_comment INTEGER DEFAULT 0,
-            language TEXT DEFAULT 'de',
+            language TEXT DEFAULT 'unknown',
             chunk_text TEXT,
             char_count INTEGER DEFAULT 0,
             source_file TEXT,
@@ -718,6 +720,7 @@ if __name__ == "__main__":
     parser.add_argument("--repair-vectors", action="store_true", help="补建缺失的 OCR 向量")
     parser.add_argument("--max-vectors", type=int, help="限制本次补建向量数量（测试用）")
     parser.add_argument("--backfill-hashes", action="store_true", help="Backfill stable content hashes for legacy chunks")
+    parser.add_argument("--skip-source-catalog", action="store_true", help="Skip derived source catalog refresh")
     parser.add_argument("--chunk-pages", action="store_true", help="切分已有页面为 passage")
     parser.add_argument("--rechunk", action="store_true", help="重新切分（清空旧 passage 数据）")
     parser.add_argument("--chunk-size", type=int, default=260, help="Passage 目标大小（近似词元，默认 260）")
@@ -821,3 +824,16 @@ if __name__ == "__main__":
         print(f"Embedding: {config['ollama']['embedding_model']}")
         print()
         build_index(max_files=args.max, use_embedding=not args.no_embed)
+        if not args.skip_source_catalog:
+            try:
+                from source_catalog import refresh_source_catalog_if_needed
+                catalog_result = refresh_source_catalog_if_needed(META_DB)
+                print("Source catalog:", json.dumps(
+                    catalog_result, ensure_ascii=False
+                ))
+            except Exception as exc:
+                print(
+                    f"WARNING: source catalog refresh failed: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )

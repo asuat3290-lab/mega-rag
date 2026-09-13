@@ -87,8 +87,13 @@ def do_scoped_search(query_terms: list, target_abt: str, target_band: str = None
     conditions = ["c.mega_abteilung = ?"]
     params = [target_abt]
     if target_band:
-        conditions.append("c.band = ?")
-        params.append(target_band)
+        target_band = str(target_band)
+        if "." in target_band:
+            conditions.append("c.band = ?")
+            params.append(target_band)
+        else:
+            conditions.append("(c.band = ? OR c.band LIKE ?)")
+            params.extend([target_band, target_band + ".%"])
     if text_only:
         conditions.append("c.is_main_text = 1")
     if source_collection:

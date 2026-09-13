@@ -70,7 +70,53 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertEqual(plan["coverage_status"], "complete")
         self.assertFalse(plan["unmapped_concepts"])
         self.assertTrue(plan["external_evidence_required"])
+        self.assertNotIn(
+            "Meaningful concepts remain unmapped; use agent refinement or bounded "
+            "hybrid planning.",
+            plan["warnings"],
+        )
 
+    def test_unknown_chinese_concepts_are_not_damaged_by_frame_removal(self):
+        plan = build_research_plan(
+            "\u9a6c\u514b\u601d\u665a\u5e74\u8de8\u8d8a"
+            "\u5361\u592b\u4e01\u5ce1\u8c37\u8bbe\u60f3\u4e0e"
+            "\u4e24\u4e2a\u51b3\u4e0d\u4f1a\u7684\u5173\u7cfb"
+        )
+        residue = " ".join(plan["unmapped_concepts"])
+        self.assertIn("\u5361\u592b\u4e01\u5ce1\u8c37", residue)
+        self.assertIn("\u4e24\u4e2a\u51b3\u4e0d\u4f1a", residue)
+        self.assertNotIn(
+            "\u4e24\u4e2a\u51b3\u4e0d\u7684\u5173\u7cfb", residue
+        )
+
+    def test_compound_subquestions_inherit_scope_and_fail_closed_when_unmapped(self):
+        question = (
+            "\u9a6c\u514b\u601d\u5728\u300a\u5269\u4f59\u4ef7\u503c\u7406\u8bba\u300b\u4e2d\u5982\u4f55\u6279\u5224\u65af\u5bc6\u7684"
+            "\u751f\u4ea7\u52b3\u52a8/\u975e\u751f\u4ea7\u52b3\u52a8\u533a\u5206\uff1f"
+            "\u9a6c\u514b\u601d\u81ea\u5df1\u7684\u6982\u5ff5\u4e0e\u65af\u5bc6\u6709\u4f55\u4e0d\u540c\uff1f"
+            "\u8fd9\u4e00\u6279\u5224\u4e0e\u5269\u4f59\u4ef7\u503c\u7406\u8bba\u6574\u4f53\u67b6\u6784\u6709\u4f55\u5173\u7cfb\uff1f"
+        )
+        plan = build_research_plan(question)
+        self.assertGreaterEqual(len(plan["subquestions"]), 3)
+        for subquestion in plan["subquestions"][:3]:
+            scopes = subquestion["query_plan"].get("target_volumes", [])
+            self.assertTrue(
+                any(
+                    scope.get("abteilung") == "II"
+                    and str(scope.get("band")) == "3"
+                    for scope in scopes
+                ),
+                subquestion,
+            )
+        inherited = plan["subquestions"][1].get("query_refinement") or {}
+        context_terms = {
+            str(value).casefold() for value in inherited.get("context_terms", [])
+        }
+        self.assertIn("produktiv", context_terms)
+        self.assertFalse(
+            plan["subquestions"][1]["query_plan"]["plan_status"]["valid_for_evidence"]
+        )
+        self.assertTrue(plan["needs_refinement"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

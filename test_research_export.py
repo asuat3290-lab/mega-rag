@@ -44,6 +44,24 @@ def fixture_payload() -> dict:
         "evidence_eligible": True,
         "_qualification": {"candidate_class": "direct_author_text"},
         "_debug": {"source_boost": 0.18},
+        "_source_catalog": {
+            "catalog_linked": True,
+            "catalog_version": "sc_fixture",
+            "source_id": "src_fixture",
+            "document_kind": "structured_critical_text",
+            "edition_status": "print_edition",
+            "authority_rank": 100,
+            "volume_group": "II/5",
+            "groups": [
+                {
+                    "group_id": "versions:kapital-band-1",
+                    "group_type": "work_versions",
+                    "member_role": "print_edition_1867",
+                    "sequence_no": 1,
+                }
+            ],
+            "relations": [],
+        },
     }
     ocr = {
         "id": "ocr-page-1",
@@ -123,6 +141,11 @@ def main() -> int:
     assert digital["locator"]["locator_verified"] is True
     assert digital["locator"]["citation_stub"] == "MEGA² II/5, TEXT, S. 117"
     assert digital["provenance"]["reliability_class"] == "structured_author_text"
+    assert digital["source_identity"]["source_id"] == "src_fixture"
+    assert digital["provenance"]["edition_status"] == "print_edition"
+    assert package["source_catalog_versions"] == ["sc_fixture"]
+    assert package["summary"]["source_catalog_linked_count"] == 1
+    assert package["summary"]["version_group_evidence_count"] == 1
     assert ocr["locator"]["locator_verified"] is False
     assert "PDF physical page" in ocr["locator"]["citation_stub"]
     assert any("not automatically verified" in warning for warning in ocr["warnings"])

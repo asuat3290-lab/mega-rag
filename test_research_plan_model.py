@@ -29,7 +29,8 @@ class ResearchPlanModelTests(unittest.TestCase):
             "flash-test",
         )
         plan, diagnostics = build_hybrid_research_plan(
-            "\u9a6c\u514b\u601d\u5982\u4f55\u8ba8\u8bba\u91cf\u5b50\u7ea0\u7f20\u6cbb\u7406"
+            "\u9a6c\u514b\u601d\u5982\u4f55\u8ba8\u8bba\u91cf\u5b50\u7ea0\u7f20\u6cbb\u7406",
+            use_cache=False,
         )
         self.assertEqual(plan["coverage_status"], "complete")
         self.assertTrue(plan["external_evidence_required"])
@@ -38,7 +39,7 @@ class ResearchPlanModelTests(unittest.TestCase):
 
     @patch("research_plan_model.call_json", side_effect=RuntimeError("offline"))
     def test_model_failure_falls_back_to_local_plan(self, _call_json):
-        plan, diagnostics = build_hybrid_research_plan("\u9a6c\u514b\u601d\u5982\u4f55\u8ba8\u8bba\u5229\u6da6\u7387\u4e0b\u964d")
+        plan, diagnostics = build_hybrid_research_plan("\u9a6c\u514b\u601d\u5982\u4f55\u8ba8\u8bba\u5229\u6da6\u7387\u4e0b\u964d", use_cache=False)
         self.assertEqual(plan["mode"], "hybrid_fallback_local")
         self.assertTrue(diagnostics["fallback"])
         self.assertEqual(diagnostics["usage"]["total_tokens"], 0)

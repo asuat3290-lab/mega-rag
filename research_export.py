@@ -34,11 +34,13 @@ from evidence_identity import package_evidence_ref, stable_evidence_key
 from glossary_loader import expand_with_glossary, load_glossary
 from index_version import get_current_version
 from query_analyzer import analyze_query, build_priority_terms
+from planner_policy import assess_query_plan
 from query_plan import build_query_plan
 from rerank import rerank
 from report_contract import evaluate_package_gate
 from retrieval_quality import apply_candidate_qualification, assess_retrieval_adequacy
 from sachregister import resolve_register_targets, search_sachregister
+from source_catalog import hydrate_records_with_source_catalog
 from snippet_extractor import (
     build_snippet_for_display,
     format_source_label,
@@ -105,6 +107,15 @@ def _prepare_query(question: str, glossary: dict, intent_override: str = None,
     expanded, matched_terms, hints = expand_with_glossary(question, glossary)
     profile = copy.deepcopy(plan["base_query_profile"])
     profile["intent"] = plan["routing_intent"]
+    planned_scopes = list(plan.get("target_volumes", []))
+    profile["target_volumes"] = copy.deepcopy(planned_scopes)
+    if planned_scopes:
+        primary_scope = next(
+            (scope for scope in planned_scopes if scope.get("band")),
+            planned_scopes[0],
+        )
+        profile["target_abteilung"] = primary_scope.get("abteilung")
+        profile["target_band"] = primary_scope.get("band")
     profile["qualification_groups"] = copy.deepcopy(
         plan.get("qualification_groups", profile.get("qualification_groups", []))
     )
@@ -116,13 +127,15 @@ def _prepare_query(question: str, glossary: dict, intent_override: str = None,
         profile.get("lexical_core", []) + plan["core_terms"]
     )
     planned_query_terms = _dedupe_terms(
-        plan["core_terms"] + plan["historical_variants"] + plan["supporting_terms"]
+        plan.get("focus_terms", [])
+        + plan["core_terms"] + plan["historical_variants"] + plan["supporting_terms"]
     )
     if planned_query_terms:
         expanded = question + " " + " ".join(planned_query_terms)
     legacy_priority = build_priority_terms(profile, glossary)
     priority_terms = _dedupe_terms(
-        plan["core_terms"] + plan["historical_variants"]
+        plan.get("focus_terms", [])
+        + plan["core_terms"] + plan["historical_variants"]
         + plan["supporting_terms"] + plan["related_non_equivalent"]
         + legacy_priority
     )
@@ -134,9 +147,88 @@ def _prepare_query(question: str, glossary: dict, intent_override: str = None,
         "query_profile": profile,
         "priority_terms": priority_terms,
         "query_plan": plan,
+        "planning_advice": assess_query_plan(plan),
         "planner_diagnostics": planner_diagnostics,
     }
 
+def _focus_diagnostics(
+    candidates: list[dict],
+    final_results: list[dict],
+    plan: dict,
+) -> dict:
+    focus_terms = _dedupe_terms(plan.get("focus_terms", []))
+    explicit = bool(plan.get("focus_explicit") and focus_terms)
+
+    def text_hits(rows: list[dict], term: str, field: str = "text") -> int:
+        needle = term.casefold()
+        return sum(
+            1 for row in rows
+            if needle in str(row.get(field) or row.get("text") or "").casefold()
+        )
+
+    per_term = []
+    for term in focus_terms:
+        per_term.append({
+            "term": term,
+            "candidate_hits": text_hits(candidates, term),
+            "final_hits": text_hits(final_results, term),
+            "snippet_hits": text_hits(final_results, term, "display_snippet"),
+            "qualified_final_hits": sum(
+                1 for row in final_results
+                if row.get("evidence_eligible")
+                and term.casefold() in {
+                    str(value).casefold()
+                    for value in row.get("_qualification", {}).get("focus_hits", [])
+                }
+            ),
+        })
+    candidate_hits = sum(
+        1 for row in candidates
+        if any(
+            term.casefold() in str(row.get("text") or "").casefold()
+            for term in focus_terms
+        )
+    )
+    final_hits = sum(
+        1 for row in final_results
+        if any(
+            term.casefold() in str(row.get("text") or "").casefold()
+            for term in focus_terms
+        )
+    )
+    qualified_final_hits = sum(
+        1 for row in final_results
+        if row.get("evidence_eligible")
+        and row.get("_qualification", {}).get("focus_hits")
+    )
+    matched_terms = [
+        str(row.get("matched_term") or "")
+        for row in final_results if row.get("matched_term")
+    ]
+    matched_focus = sum(
+        1 for value in matched_terms
+        if any(term.casefold() == value.casefold() for term in focus_terms)
+    )
+    warnings = []
+    if explicit and candidate_hits == 0:
+        warnings.append("explicit_focus_not_recalled")
+    elif explicit and qualified_final_hits == 0:
+        warnings.append("explicit_focus_not_in_qualified_final_evidence")
+    if explicit and final_hits and matched_terms and matched_focus == 0:
+        warnings.append("display_term_mismatch")
+    if (
+        not explicit and len(plan.get("core_terms", [])) > 1
+        and not plan.get("matched_rule_ids")
+    ):
+        warnings.append("focus_not_declared_for_flat_multi_term_query")
+    return {
+        "explicit": explicit, "focus_terms": focus_terms,
+        "candidate_hits": candidate_hits, "final_hits": final_hits,
+        "qualified_final_hits": qualified_final_hits,
+        "matched_focus_count": matched_focus, "per_term": per_term,
+        "warnings": warnings,
+        "true_focus_miss": bool(explicit and candidate_hits == 0),
+    }
 
 def _retag_candidates(candidates: list[dict], source: str) -> None:
     for candidate in candidates:
@@ -157,7 +249,8 @@ def _inject_planned_branches(results: list[dict], plan: dict, profile: dict,
         "structural_injected": 0,
     }
     exact_terms = _dedupe_terms(
-        plan.get("core_terms", []) + plan.get("historical_variants", [])
+        plan.get("focus_terms", []) + plan.get("core_terms", [])
+        + plan.get("historical_variants", [])
     )
     text_route = "main_text" if plan.get("routing_intent") == "author_argument" else route
 
@@ -294,7 +387,8 @@ def retrieve_research_evidence(
         _inject_planned_branches(results, plan, profile, route, top_k)
     )
     register_terms = _dedupe_terms(
-        plan.get("core_terms", []) + plan.get("historical_variants", [])
+        plan.get("focus_terms", []) + plan.get("core_terms", [])
+        + plan.get("historical_variants", [])
         + plan.get("related_non_equivalent", [])
     )[:15]
     try:
@@ -339,9 +433,23 @@ def retrieve_research_evidence(
     )
     results = apply_concept_group_coverage(results, profile)
     results = apply_candidate_qualification(results, plan)
+    candidate_results = list(results)
     results = results[:top_k]
     build_snippet_for_display(results, prepared["priority_terms"])
+    retrieval_debug["focus_diagnostics"] = _focus_diagnostics(
+        candidate_results, results, plan
+    )
     _hydrate_source_metadata(results)
+    try:
+        retrieval_debug["source_catalog"] = hydrate_records_with_source_catalog(
+            results, META_DB
+        )
+    except Exception as exc:
+        retrieval_debug["source_catalog"] = {
+            "linked": 0,
+            "catalog_available": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
     retrieval_debug["final_results"] = len(results)
     retrieval_debug["adequacy"] = assess_retrieval_adequacy(
         results, plan,
@@ -527,6 +635,7 @@ def _source_status(record: dict, locator: dict) -> dict:
     title_key = title.casefold()
     collection = str(record.get("source_collection") or "ocr").casefold()
     quality = str(record.get("source_quality") or "ocr").casefold()
+    source_identity = record.get("_source_catalog") or {}
 
     if layer == "author_text":
         authorship_status = "author_text_layer"
@@ -539,7 +648,10 @@ def _source_status(record: dict, locator: dict) -> dict:
     else:
         authorship_status = "unclassified"
 
-    if any(marker in title_key for marker in ("manuskript", "entwurf", "grundrisse", "exzerpt")):
+    catalog_edition_status = str(source_identity.get("edition_status") or "").strip()
+    if catalog_edition_status:
+        edition_status = catalog_edition_status
+    elif any(marker in title_key for marker in ("manuskript", "entwurf", "grundrisse", "exzerpt")):
         edition_status = "manuscript_or_draft_edition"
     elif any(marker in title_key for marker in ("druckfassung", "drucktext")):
         edition_status = "edited_print_edition"
@@ -581,7 +693,23 @@ def serialize_evidence(
     snippet = str(record.get("display_snippet") or record.get("text") or "")
     locator = _locator(record)
     source_status = _source_status(record, locator)
+    source_identity = dict(record.get("_source_catalog") or {})
+    source_identity.setdefault("catalog_linked", False)
+    source_identity.setdefault("source_id", None)
+    source_identity.setdefault("catalog_version", None)
+    source_identity.setdefault("groups", [])
+    source_identity.setdefault("relations", [])
     debug = record.get("_debug", {})
+    qualification = record.get("_qualification", {})
+    match_types = list(qualification.get("match_types") or [])
+    primary_match_type = next(
+        (
+            value for value in
+            ("exact_phrase", "lexical_variant", "semantic_related")
+            if value in match_types
+        ),
+        None,
+    )
     payload = {
         "evidence_id": f"E{rank:03d}",
         "rank": rank,
@@ -593,6 +721,7 @@ def serialize_evidence(
             "content_hash": record.get("content_hash"),
         },
         "source": {
+            "source_id": source_identity.get("source_id"),
             "display_label": format_source_label(record),
             "title": record.get("source_title"),
             "collection": record.get("source_collection", "ocr"),
@@ -603,7 +732,11 @@ def serialize_evidence(
             "source_url": record.get("source_url"),
             "local_path": record.get("source_path"),
         },
+        "source_identity": source_identity,
         "locator": locator,
+        "match_type": primary_match_type,
+        "match_types": match_types,
+        "match_type_details": qualification.get("match_type_details", {}),
         "provenance": {
             "text_layer": record.get("text_layer", "unclassified"),
             "text_layer_label": text_layer_label(record),
@@ -611,9 +744,43 @@ def serialize_evidence(
             "text_layer_provenance": record.get("text_layer_provenance"),
             "verified_author_text": is_verified_author_text(record),
             "evidence_eligible": bool(record.get("evidence_eligible", False)),
-            "candidate_class": record.get("_qualification", {}).get("candidate_class"),
+            "semantic_ready": bool(
+                qualification.get("semantic_ready", record.get("evidence_eligible", False))
+            ),
+            "scope_ready": bool(
+                qualification.get("scope_ready", record.get("scope_ready", True))
+            ),
+            "provenance_ready": bool(
+                qualification.get("provenance_ready", is_verified_author_text(record))
+            ),
+            "claim_eligible": bool(
+                qualification.get(
+                    "claim_eligible",
+                    record.get("claim_eligible", record.get("evidence_eligible", False)),
+                )
+            ),
+            "claim_ready": bool(
+                qualification.get(
+                    "claim_ready",
+                    record.get(
+                        "claim_ready",
+                        bool(record.get("evidence_eligible"))
+                        and is_verified_author_text(record),
+                    ),
+                )
+            ),
+            "provisional_claim_ready": bool(
+                qualification.get(
+                    "provisional_claim_ready",
+                    bool(record.get("evidence_eligible"))
+                    and not is_verified_author_text(record),
+                )
+            ),
+            "candidate_class": qualification.get("candidate_class"),
             "reliability_class": _reliability_class(record),
             "ocr_quality": record.get("ocr_quality"),
+            "source_catalog_linked": bool(source_identity.get("catalog_linked")),
+            "source_catalog_version": source_identity.get("catalog_version"),
             **source_status,
         },
         "evidence": {
@@ -635,6 +802,9 @@ def serialize_evidence(
             "matched_variants": record.get("_matched_variants", []),
             "concept_groups": record.get("_matched_concept_groups", []),
             "qualification": record.get("_qualification", {}),
+            "match_type": primary_match_type,
+            "match_types": match_types,
+            "match_type_details": qualification.get("match_type_details", {}),
             "register_references": record.get("_register_references", []),
             "rrf_score": record.get("rrf_score"),
             "final_score": record.get("final_score"),
@@ -668,11 +838,15 @@ def build_research_package(question: str, retrieval_payload: dict) -> dict:
         item["package_evidence_ref"] = package_evidence_ref(
             package_id, item["evidence_id"]
         )
-        item["evidence_role"] = (
-            "qualified_evidence"
-            if item.get("provenance", {}).get("evidence_eligible")
-            else "provisional_candidate"
-        )
+        provenance = item.get("provenance", {})
+        if provenance.get("claim_ready"):
+            item["evidence_role"] = "claim_ready_evidence"
+        elif provenance.get("claim_eligible"):
+            item["evidence_role"] = "provisional_claim_evidence"
+        elif provenance.get("evidence_eligible"):
+            item["evidence_role"] = "out_of_scope_or_context_evidence"
+        else:
+            item["evidence_role"] = "provisional_candidate"
     total_chars = sum(item["evidence"]["character_count"] for item in evidence)
     summary = {
         # evidence_count remains the total candidate count for v1 compatibility.
@@ -681,14 +855,43 @@ def build_research_package(question: str, retrieval_payload: dict) -> dict:
         "qualified_evidence_count": sum(
             item["provenance"].get("evidence_eligible", False) for item in evidence
         ),
+        "qualified_text_evidence_count": sum(
+            bool(item["provenance"].get("evidence_eligible", False))
+            and str(item.get("locator", {}).get("text_type") or "").upper() == "TEXT"
+            for item in evidence
+        ),
+        "claim_eligible_text_count": sum(
+            bool(item["provenance"].get("claim_eligible", False))
+            and str(item.get("locator", {}).get("text_type") or "").upper() == "TEXT"
+            for item in evidence
+        ),
         "authoritative_digital_count": sum(
             item["source"]["collection"] == "megadigital" for item in evidence
         ),
         "verified_author_text_count": sum(
             item["provenance"]["verified_author_text"] for item in evidence
         ),
+        "source_catalog_linked_count": sum(
+            bool(item.get("source_identity", {}).get("catalog_linked"))
+            for item in evidence
+        ),
+        "version_group_evidence_count": sum(
+            any(
+                group.get("group_type") in {
+                    "work_versions", "textual_stages", "multipart_edition"
+                }
+                for group in item.get("source_identity", {}).get("groups", [])
+            )
+            for item in evidence
+        ),
         "evidence_eligible_count": sum(
             item["provenance"].get("evidence_eligible", False) for item in evidence
+        ),
+        "claim_eligible_count": sum(
+            item["provenance"].get("claim_eligible", False) for item in evidence
+        ),
+        "claim_ready_count": sum(
+            item["provenance"].get("claim_ready", False) for item in evidence
         ),
         "citation_ready_count": sum(
             item["evidence"].get("quote_eligible", False) for item in evidence
@@ -701,11 +904,19 @@ def build_research_package(question: str, retrieval_payload: dict) -> dict:
             item["evidence"]["rough_token_estimate"] for item in evidence
         ),
     }
+    source_catalog_versions = sorted(
+        {
+            str(item.get("source_identity", {}).get("catalog_version"))
+            for item in evidence
+            if item.get("source_identity", {}).get("catalog_version")
+        }
+    )
     package = {
         "schema_version": EXPORT_SCHEMA_VERSION,
         "package_id": package_id,
         "generated_at": generated_at,
         "index_version": index_version,
+        "source_catalog_versions": source_catalog_versions,
         "question": question,
         "query_hash": query_digest,
         "query": query,
@@ -719,6 +930,8 @@ def build_research_package(question: str, retrieval_payload: dict) -> dict:
             "Use evidence_uid or package_evidence_ref when combining packages; E### is package-local.",
             "Sachregister records are navigation hints only; cite the resolved TEXT passage.",
             "Related non-equivalent terms provide context and must not be reported as exact concept hits.",
+            "Keep source_id and edition_status visible; do not collapse manuscript, editorial, and print stages.",
+            "Source relations are edition-level navigation unless a relation explicitly states passage-level alignment.",
         ],
         "evidence": evidence,
     }
@@ -738,6 +951,7 @@ def render_research_markdown(package: dict) -> str:
         f"- Package ID: `{package['package_id']}`",
         f"- Generated: `{package['generated_at']}`",
         f"- Index version: `{package['index_version']}`",
+        f"- Source catalog: `{', '.join(package.get('source_catalog_versions', [])) or 'not linked'}`",
         f"- Artifact type: `{package.get('artifact_type', 'research_evidence_package')}`",
         f"- Evidence candidates: {summary.get('candidate_count', summary['evidence_count'])}",
         f"- Qualified evidence: {summary.get('qualified_evidence_count', 0)}",
@@ -763,15 +977,16 @@ def render_research_markdown(package: dict) -> str:
         "",
         "## Evidence index",
         "",
-        "| ID | Stable UID | Role | Source | Layer | Matched terms | Locator verified |",
-        "|---|---|---|---|---|---|---|",
+        "| ID | Stable UID | Role | Match type | Source | Layer | Matched terms | Locator verified |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for item in package["evidence"]:
         matched = ", ".join(item["evidence"]["matched_priority_terms"]) or "-"
         verified = "yes" if item["locator"]["locator_verified"] else "no"
         lines.append(
             f"| {item['evidence_id']} | `{item.get('evidence_uid', '-')}` | "
-            f"{item.get('evidence_role', '-')} | {item['locator']['citation_stub']} | "
+            f"{item.get('evidence_role', '-')} | {item.get('match_type') or '-'} | "
+            f"{item['locator']['citation_stub']} | "
             f"{item['provenance']['text_layer_label']} | {matched} | {verified} |"
         )
 
@@ -784,11 +999,15 @@ def render_research_markdown(package: dict) -> str:
             f"- Stable UID: `{item.get('evidence_uid', '-')}`",
             f"- Package reference: `{item.get('package_evidence_ref', '-')}`",
             f"- Evidence role: `{item.get('evidence_role', '-')}`",
+            f"- Match type: `{item.get('match_type') or '-'}`",
             f"- Source: {item['source']['display_label']}",
+            f"- Source ID: `{item.get('source_identity', {}).get('source_id') or '-'}`",
             f"- Title: {item['source']['title'] or '-'}",
             f"- Collection: `{item['source']['collection']}`",
             f"- Text layer: {item['provenance']['text_layer_label']}",
             f"- Reliability: `{item['provenance']['reliability_class']}`",
+            f"- Edition status: `{item['provenance']['edition_status']}`",
+            f"- Version groups: {', '.join(group.get('group_id', '') for group in item.get('source_identity', {}).get('groups', []) if group.get('group_id')) or '-'}",
             f"- Locator verified: `{str(item['locator']['locator_verified']).lower()}`",
             f"- Citation note: {item['locator']['citation_note']}",
             f"- Matched terms: {', '.join(item['evidence']['matched_priority_terms']) or '-'}",
@@ -821,6 +1040,8 @@ def render_research_markdown(package: dict) -> str:
         "3. Do not turn a PDF physical page into a formal MEGA page citation without verification.",
         "4. State explicitly when the evidence package does not support a requested claim.",
         "5. Preserve the German wording when making a philological claim.",
+        "6. Preserve source_id and edition_status when comparing manuscript or print stages.",
+        "7. Treat source relations as navigation unless passage-level alignment is explicitly verified.",
         "",
     ])
     return "\n".join(lines)

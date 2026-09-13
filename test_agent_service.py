@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agent_service import evidence_from_package, search_agent
+from agent_service import evidence_from_package, plan_agent, search_agent
 from research_export import serialize_evidence
 
 
@@ -65,12 +65,58 @@ def _retrieval_payload():
                 "_retrieval_sources": ["unit_test"],
                 "evidence_eligible": True,
                 "_qualification": {"candidate_class": "direct_author_text"},
+                "_source_catalog": {
+                    "catalog_linked": True,
+                    "catalog_version": "sc_test",
+                    "source_id": "src_test",
+                    "document_kind": "structured_critical_text",
+                    "edition_status": "print_edition",
+                    "authority_rank": 100,
+                    "volume_group": "II/4",
+                    "groups": [
+                        {
+                            "group_id": "versions:test",
+                            "group_type": "work_versions",
+                            "member_role": "print_edition",
+                            "sequence_no": 1,
+                        }
+                    ],
+                    "relations": [
+                        {
+                            "direction": "outgoing",
+                            "predicate": "earlier_edition_of_same_work",
+                            "related_source_id": "src_later",
+                        }
+                    ],
+                },
             }
         ],
     }
 
 
 class AgentServiceTests(unittest.TestCase):
+    @patch("agent_service.find_promoted")
+    def test_auto_planner_reuses_only_promoted_memory(self, find_promoted_mock):
+        find_promoted_mock.return_value = {
+            "memory_id": "memory-test",
+            "payload": {"core_terms": ["Quantenverschraenkungsgovernance"]},
+        }
+        response = plan_agent(
+            "\u91cf\u5b50\u7ea0\u7f20\u6cbb\u7406",
+            planner_mode="auto",
+            include_probe=False,
+            include_register=False,
+        )
+        self.assertEqual(
+            response["planner_diagnostics"]["effective_mode"],
+            "promoted_memory",
+        )
+        self.assertTrue(response["planner_diagnostics"]["memory_hit"])
+        self.assertIn(
+            "Quantenverschraenkungsgovernance",
+            response["plan"]["core_terms"],
+        )
+
     @patch("agent_service.retrieve_research_evidence", return_value=_retrieval_payload())
     def test_search_index_is_compact_and_source_aware(self, _mock_retrieve):
         response = search_agent("利润率下降", detail="index")
@@ -87,6 +133,13 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(evidence["preview_only"])
         self.assertFalse(evidence["quote_eligible"])
         self.assertTrue(evidence["source_quote_eligible"])
+        self.assertEqual(evidence["source_id"], "src_test")
+        self.assertEqual(evidence["source_catalog_version"], "sc_test")
+        self.assertEqual(evidence["version_groups"][0]["group_id"], "versions:test")
+        self.assertEqual(
+            evidence["source_relations"][0]["predicate"],
+            "earlier_edition_of_same_work",
+        )
         self.assertEqual(evidence["authorship_status"], "author_text_layer")
         self.assertTrue(any("selection only" in value for value in evidence["warnings"]))
 
@@ -106,10 +159,11 @@ class AgentServiceTests(unittest.TestCase):
                 )
                 full_item = expanded["evidence"][0]
                 self.assertTrue(full_item["evidence"]["quote_eligible"])
-                self.assertEqual(full_item["provenance"]["edition_status"], "critical_edition_text")
+                self.assertEqual(full_item["provenance"]["edition_status"], "print_edition")
 
     def test_edition_status_distinguishes_manuscript_and_print_text(self):
         record = dict(_retrieval_payload()["results"][0])
+        record.pop("_source_catalog", None)
         record["source_title"] = "Das Kapital, Druckfassung 1894"
         printed = serialize_evidence(record, 1, ["Profitrate"])
         self.assertEqual(
@@ -121,6 +175,16 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             manuscript["provenance"]["edition_status"], "manuscript_or_draft_edition"
         )
+
+    def test_catalog_edition_status_overrides_title_heuristic(self):
+        record = dict(_retrieval_payload()["results"][0])
+        record["source_title"] = "Ambiguous title"
+        record["_source_catalog"]["edition_status"] = "editorial_manuscript_edition"
+        item = serialize_evidence(record, 1, ["Profitrate"])
+        self.assertEqual(
+            item["provenance"]["edition_status"], "editorial_manuscript_edition"
+        )
+        self.assertEqual(item["source_identity"]["source_id"], "src_test")
 
     def test_editorial_material_is_never_quote_eligible(self):
         record = dict(_retrieval_payload()["results"][0])

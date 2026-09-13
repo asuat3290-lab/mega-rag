@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from typing import Iterable
 
-CLASSIFIER_VERSION = "text-layer-v1"
+CLASSIFIER_VERSION = "text-layer-v3"
 
 
 @dataclass(frozen=True)
@@ -29,9 +29,26 @@ def normalize_text(value: str) -> str:
 
 
 def extract_running_header(text: str) -> str:
-    """Return the first plausible running header, skipping page-number noise."""
-    for raw_line in (text or "").splitlines()[:12]:
-        line = unicodedata.normalize("NFKC", raw_line).strip()
+    """Return a known running header, then fall back to the first plausible line."""
+    lines = [
+        unicodedata.normalize("NFKC", raw_line).strip()
+        for raw_line in (text or "").splitlines()[:12]
+    ]
+    known_pattern = re.compile(
+        r"\b("
+        r"editorische\s+einleitung|editorische\s+hinweise|"
+        r"hinweise\s+zur\s+edition|inhaltsverzeichnis|inhalt|"
+        r"einleitung|vorwort|sachregister|namenregister|"
+        r"literaturregister|personenregister|quellenregister"
+        r")\b",
+        flags=re.IGNORECASE,
+    )
+    for line in lines:
+        known_heading = known_pattern.search(line)
+        if known_heading:
+            return re.sub(r"\s+", " ", known_heading.group(1))[:180]
+
+    for line in lines:
         line = re.sub(r"^[\W_\d]+", "", line, flags=re.UNICODE).strip()
         if len(line) < 3:
             continue
@@ -40,7 +57,6 @@ def extract_running_header(text: str) -> str:
             continue
         return re.sub(r"\s+", " ", line)[:180]
     return ""
-
 
 def _heading_matches(header: str, patterns: Iterable[str]) -> bool:
     normalized = normalize_text(header)
@@ -51,6 +67,7 @@ def _strong_editorial_anchor(text: str) -> bool:
     normalized = normalize_text(text[:3000])
     patterns = (
         r"\bder vorliegende band\b",
+        r"\b(?:das|der|die) vorliegende(?:n|r|s)?\b",
         r"\bim vorliegenden band\b",
         r"\bdie herausgeber\b",
         r"\bherausgegeben von\b",
@@ -61,6 +78,23 @@ def _strong_editorial_anchor(text: str) -> bool:
         r"\bentstehung und überlieferung\b",
     )
     return any(re.search(pattern, normalized) for pattern in patterns)
+
+
+def _editorial_narration_score(text: str) -> int:
+    """Detect third-person editorial narration inside an introduction."""
+    normalized = normalize_text(text[:5000])
+    patterns = (
+        r"\bmarx bezeichnete\b",
+        r"\bmarx(?:'|\u2019|s)? kritik und analyse\b",
+        r"\bf\u00fcr marx war\b",
+        r"\bmarx ging von\b",
+        r"\bmarx wies nach\b",
+        r"\bmarx formulierte\b",
+        r"\bim manuskript von\b",
+        r"\bim vorliegenden band\b",
+        r"\bheft [ivxlcdm0-9]+\b",
+    )
+    return sum(bool(re.search(pattern, normalized)) for pattern in patterns)
 
 
 def _looks_like_volume_contents(text: str, page: int, max_page: int) -> bool:
@@ -138,8 +172,15 @@ def classify_records(records: list[dict]) -> dict[str, LayerDecision]:
         in_front_region = min(int(item.get("page") or 0) for item in group) <= max(
             80, int(max_page * 0.20)
         )
-        if is_intro_heading and in_front_region and any(
+        strong_anchor = any(
             _strong_editorial_anchor(item.get("chunk_text") or "") for item in group
+        )
+        narrated_intro = any(
+            _editorial_narration_score(item.get("chunk_text") or "") >= 2
+            for item in group
+        )
+        if is_intro_heading and in_front_region and (
+            strong_anchor or narrated_intro
         ):
             editorial_headers.add(normalized_header)
 

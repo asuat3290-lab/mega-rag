@@ -108,7 +108,10 @@ def _detailed_intent(question: str, base_intent: str,
 
 
 def _routing_intent(detailed_intent: str, base_intent: str) -> str:
-    if detailed_intent in {"claim_verification", "concept_relation", "frequency_analysis"}:
+    if detailed_intent in {
+        "author_argument", "claim_verification", "concept_relation",
+        "frequency_analysis",
+    }:
         return "author_argument"
     if detailed_intent in {"apparat_question", "source_question"}:
         return "apparat_question"
@@ -217,8 +220,8 @@ def build_query_plan(question: str, *, glossary: dict | None = None,
     relation_pairs: list[list[str]] = []
     rule_role_map: dict[str, str] = {}
     target_works: list[str] = list(base_profile.get("work_terms", []))
-    target_volumes: list[dict] = []
-    if base_profile.get("target_abteilung"):
+    target_volumes: list[dict] = deepcopy(base_profile.get("target_volumes", []))
+    if not target_volumes and base_profile.get("target_abteilung"):
         target_volumes.append({
             "label": "/".join(filter(None, [base_profile["target_abteilung"], base_profile.get("target_band")])),
             "abteilung": base_profile["target_abteilung"],
@@ -379,6 +382,9 @@ def build_query_plan(question: str, *, glossary: dict | None = None,
         "quantifiers": quantifiers,
         "core_terms": terms["core"],
         "historical_variants": terms["historical"],
+        "focus_terms": [],
+        "context_terms": _dedupe(terms["supporting"] + terms["generic"]),
+        "focus_explicit": False,
         "related_non_equivalent": terms["related"],
         "supporting_terms": terms["supporting"],
         "generic_terms": terms["generic"],
@@ -421,25 +427,124 @@ def _refinement_terms(value: Any, field: str, limit: int = 40) -> list[str]:
     return _dedupe(output)
 
 
+_HISTORICAL_ORTHOGRAPHY_PAIRS = (
+    ("produkt", "product"),
+    ("kapital", "capital"),
+    ("konkurr", "concurr"),
+    ("konsum", "consum"),
+    ("kommun", "commun"),
+    ("konstit", "constit"),
+    ("konzent", "concent"),
+    ("kredit", "credit"),
+    ("kategorie", "categorie"),
+    ("konkret", "concret"),
+)
+
+
+def _historical_spelling_variants(values: list[str]) -> list[str]:
+    """Generate bounded modern/historical German c-k variants for explicit terms."""
+    output = []
+    for value in values:
+        text = str(value or "").strip()
+        lowered = text.casefold()
+        if len(text) < 3:
+            continue
+        for modern, historical in _HISTORICAL_ORTHOGRAPHY_PAIRS:
+            if modern in lowered:
+                output.append(
+                    re.sub(re.escape(modern), historical, text, flags=re.IGNORECASE)
+                )
+            if historical in lowered:
+                output.append(
+                    re.sub(re.escape(historical), modern, text, flags=re.IGNORECASE)
+                )
+    return _dedupe(output)
+
+def _refinement_qualification_groups(
+    value: Any,
+    *,
+    source: str,
+    limit: int = 20,
+) -> list[dict]:
+    """Validate phrase/proximity groups supplied by an agent or parent plan."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(
+            "query-plan refinement field qualification_groups must be a list"
+        )
+    output = []
+    for index, raw in enumerate(value[:limit], start=1):
+        if not isinstance(raw, dict):
+            raise ValueError("query-plan qualification groups must be objects")
+        alternatives = _refinement_terms(
+            raw.get("alternatives"), "qualification_group.alternatives", 20
+        )
+        if not alternatives:
+            continue
+        match_mode = str(raw.get("match_mode") or "any").strip()
+        if match_mode not in {"any", "all_near"}:
+            raise ValueError(
+                f"unsupported qualification-group match mode: {match_mode}"
+            )
+        window_chars = int(raw.get("window_chars") or 220)
+        window_chars = max(40, min(window_chars, 2000))
+        group_id = str(raw.get("id") or f"{source}:{index}").strip()[:120]
+        output.append({
+            "id": group_id,
+            "label": str(raw.get("label") or group_id).strip()[:160],
+            "alternatives": alternatives,
+            "source_term": raw.get("source_term"),
+            "source": str(raw.get("source") or source)[:120],
+            "equivalent": bool(raw.get("equivalent", True)),
+            "match_mode": match_mode,
+            "window_chars": window_chars,
+            "required_for_evidence": bool(raw.get("required_for_evidence")),
+        })
+    return _dedupe(output)
+
+
 def merge_query_plan(plan: dict, refinement: dict, *, source: str = "agent_supplied") -> dict:
     """Merge a model/agent suggestion through a strict, auditable schema."""
     if not isinstance(refinement, dict):
         raise ValueError("query-plan refinement must be a JSON object")
     output = deepcopy(plan)
+    focus_supplied = _refinement_terms(
+        refinement.get("focus_terms"), "focus_terms"
+    )
+    context_supplied = _refinement_terms(
+        refinement.get("context_terms"), "context_terms"
+    )
     role_fields = (
         "core_terms", "historical_variants", "related_non_equivalent",
         "supporting_terms", "generic_terms",
     )
+    supplied_by_field = {
+        field: _refinement_terms(refinement.get(field), field)
+        for field in role_fields
+    }
+    supplied_by_field["core_terms"] = _dedupe(
+        focus_supplied + supplied_by_field["core_terms"]
+    )
+    generated_historical = _historical_spelling_variants(
+        focus_supplied
+        + supplied_by_field["core_terms"]
+        + supplied_by_field["historical_variants"]
+    )
+    supplied_by_field["historical_variants"] = _dedupe(
+        supplied_by_field["historical_variants"] + generated_historical
+    )
+    supplied_by_field["supporting_terms"] = _dedupe(
+        context_supplied + supplied_by_field["supporting_terms"]
+    )
     role_values = {
-        field: _dedupe(list(output.get(field, [])) + _refinement_terms(
-            refinement.get(field), field
-        ))
+        field: _dedupe(list(output.get(field, [])) + supplied_by_field[field])
         for field in role_fields
     }
     # The refinement's explicit role wins for newly supplied terms.
     supplied_role = {}
     for field in role_fields:
-        for term in _refinement_terms(refinement.get(field), field):
+        for term in supplied_by_field[field]:
             supplied_role[normalize_key(term)] = field
     for field in role_fields:
         role_values[field] = [
@@ -447,6 +552,19 @@ def merge_query_plan(plan: dict, refinement: dict, *, source: str = "agent_suppl
             if supplied_role.get(normalize_key(term), field) == field
         ]
         output[field] = role_values[field]
+    supplied_exact = _dedupe(
+        focus_supplied
+        + supplied_by_field["core_terms"]
+        + supplied_by_field["historical_variants"]
+    )
+    if supplied_exact:
+        output["core_terms"] = _dedupe(supplied_exact + output["core_terms"])
+    output["focus_terms"] = supplied_exact
+    output["context_terms"] = _dedupe(
+        context_supplied + output.get("context_terms", [])
+    )
+    output["focus_explicit"] = bool(supplied_exact)
+    output["generated_historical_variants"] = generated_historical
 
     output["target_works"] = _dedupe(
         list(output.get("target_works", []))
@@ -506,29 +624,32 @@ def merge_query_plan(plan: dict, refinement: dict, *, source: str = "agent_suppl
     output["branches"] = _build_branches(
         terms, output["target_volumes"], output["relation_pairs"], output["routing_intent"]
     )
-    supplied_exact = _dedupe(
-        _refinement_terms(refinement.get("core_terms"), "core_terms")
-        + _refinement_terms(refinement.get("historical_variants"), "historical_variants")
-    )
     groups = list(output.get("qualification_groups", []))
+    groups.extend(_refinement_qualification_groups(
+        refinement.get("qualification_groups"), source=source
+    ))
     if supplied_exact:
         groups.append({
-            "id": f"refinement:{source}",
-            "label": "agent refinement",
+            "id": f"focus:{source}",
+            "label": "explicit focus",
             "alternatives": supplied_exact,
             "source_term": None,
             "source": source,
             "equivalent": True,
+            "required_for_evidence": True,
         })
     output["qualification_groups"] = _dedupe(groups)
     plan_issues = []
+    required_group_present = any(
+        group.get("required_for_evidence") for group in output["qualification_groups"]
+    )
     scope_only_valid = bool(
         output.get("target_volumes")
         and output.get("routing_intent") == "apparat_question"
         and not output["core_terms"] and not output["historical_variants"]
     )
     if (not output["core_terms"] and not output["historical_variants"]
-            and not scope_only_valid):
+            and not scope_only_valid and not required_group_present):
         plan_issues.append("missing_discriminating_core")
     if (output["core_terms"] or output["historical_variants"]) and not groups:
         plan_issues.append("missing_qualification_groups")
@@ -556,6 +677,8 @@ def compact_plan(plan: dict) -> dict:
     keys = (
         "protocol", "planner_version", "intent", "routing_intent",
         "claim_strength", "core_terms", "historical_variants",
+        "focus_terms", "context_terms", "focus_explicit",
+        "generated_historical_variants",
         "related_non_equivalent", "supporting_terms", "generic_terms",
         "qualification_groups", "plan_status", "target_works", "target_volumes",
         "target_topics", "branches", "warnings",

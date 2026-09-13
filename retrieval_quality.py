@@ -91,15 +91,26 @@ def _match_qualification_groups(text: str, groups: list[dict]) -> list[dict]:
                 "match_mode": mode,
                 "strength": strength,
                 "source": group.get("source"),
+                "required_for_evidence": bool(group.get("required_for_evidence")),
             })
     return matches
+
+
+def _band_matches(actual: object, target: object) -> bool:
+    actual_text = str(actual or "")
+    target_text = str(target or "")
+    if not target_text:
+        return True
+    if actual_text == target_text:
+        return True
+    return "." not in target_text and actual_text.startswith(target_text + ".")
 
 
 def _volume_match(result: dict, target_volumes: list[dict]) -> bool:
     for volume in target_volumes:
         if not volume.get("abteilung") or result.get("abteilung") != volume["abteilung"]:
             continue
-        if not volume.get("band") or str(result.get("band")) == str(volume["band"]):
+        if _band_matches(result.get("band"), volume.get("band")):
             return True
     return False
 
@@ -121,14 +132,43 @@ def _provenance_role(result: dict, plan: dict) -> tuple[bool, str]:
     return eligible, "source_evidence" if eligible else "paratext_or_unknown"
 
 
+def _provenance_ready(result: dict, plan: dict) -> bool:
+    """Return strict source-layer readiness without hiding provisional OCR candidates."""
+    layer = str(result.get("text_layer") or "unclassified")
+    routing = str(plan.get("routing_intent") or plan.get("intent") or "general_search")
+    if routing == "author_argument":
+        return layer == "author_text"
+    if routing == "apparat_question":
+        return layer in EDITORIAL_LAYERS
+    return layer in {
+        "author_text", "apparatus", "editorial_intro", "editorial_note"
+    }
+
+
 def qualify_candidate(result: dict, plan: dict) -> dict:
     text = str(result.get("text") or result.get("display_snippet") or "")
     groups = list(plan.get("qualification_groups", []))
     group_matches = _match_qualification_groups(text, groups)
     direct_terms = list(plan.get("core_terms", [])) + list(plan.get("historical_variants", []))
-    direct_hits = [
-        term for match in group_matches for term in match.get("matched_terms", [])
-    ] if groups else _matches(text, direct_terms)
+    required_groups = [
+        group for group in groups if group.get("required_for_evidence")
+    ]
+    if required_groups:
+        required_ids = {str(group.get("id")) for group in required_groups}
+        focus_matches = [
+            match for match in group_matches
+            if str(match.get("id")) in required_ids
+        ]
+        direct_hits = [
+            term for match in focus_matches for term in match.get("matched_terms", [])
+        ]
+    else:
+        focus_matches = []
+        direct_hits = [
+            term for match in group_matches for term in match.get("matched_terms", [])
+        ] if groups else _matches(text, direct_terms)
+    core_hits = _matches(text, plan.get("core_terms", []))
+    historical_hits = _matches(text, plan.get("historical_variants", []))
     related_hits = _matches(text, plan.get("related_non_equivalent", []))
     support_hits = _matches(text, plan.get("supporting_terms", []))
     generic_hits = _matches(text, plan.get("generic_terms", []))
@@ -139,13 +179,31 @@ def qualify_candidate(result: dict, plan: dict) -> dict:
             relation_pair_hits.append(hits)
 
     provenance_eligible, provenance_role = _provenance_role(result, plan)
+    provenance_ready = _provenance_ready(result, plan)
     target_match = _volume_match(result, plan.get("target_volumes", []))
+    scope_ready = not bool(plan.get("target_volumes")) or target_match
     structural = bool(relation_pair_hits or (len(support_hits) >= 2))
     scope_only_match = bool(
         plan.get("plan_status", {}).get("scope_only_valid")
         and target_match and provenance_eligible
     )
-    semantic_relevant = bool(direct_hits or structural or scope_only_match)
+    structural_eligible = structural and not required_groups
+    semantic_relevant = bool(direct_hits or structural_eligible or scope_only_match)
+    match_type_details = {
+        "exact_phrase": list(dict.fromkeys(core_hits)),
+        "lexical_variant": list(dict.fromkeys(historical_hits)),
+        "semantic_related": list(dict.fromkeys(
+            related_hits + support_hits
+            + [term for pair in relation_pair_hits for term in pair]
+        )),
+    }
+    match_types = [
+        match_type for match_type in (
+            "exact_phrase", "lexical_variant", "semantic_related"
+        ) if match_type_details[match_type]
+    ]
+    if structural_eligible and "semantic_related" not in match_types:
+        match_types.append("semantic_related")
     routing = str(plan.get("routing_intent") or plan.get("intent") or "general_search")
 
     if direct_hits and provenance_eligible:
@@ -159,7 +217,7 @@ def qualify_candidate(result: dict, plan: dict) -> dict:
     elif scope_only_match:
         candidate_class = "scoped_editorial_evidence"
         rank_bucket = 0
-    elif structural and provenance_eligible:
+    elif structural_eligible and provenance_eligible:
         candidate_class = "structural_author_text" if routing == "author_argument" else "structural_source_evidence"
         rank_bucket = 2 if target_match else 3
     elif related_hits and provenance_eligible:
@@ -168,6 +226,9 @@ def qualify_candidate(result: dict, plan: dict) -> dict:
     elif direct_hits or related_hits or structural:
         candidate_class = "editorial_or_paratext_context"
         rank_bucket = 5
+    elif required_groups and (group_matches or support_hits or generic_hits):
+        candidate_class = "context_only_without_focus"
+        rank_bucket = 6
     elif generic_hits:
         candidate_class = "generic_only"
         rank_bucket = 7
@@ -176,11 +237,23 @@ def qualify_candidate(result: dict, plan: dict) -> dict:
         rank_bucket = 8
 
     evidence_eligible = bool(provenance_eligible and semantic_relevant)
+    claim_eligible = bool(evidence_eligible and scope_ready)
+    claim_ready = bool(claim_eligible and provenance_ready)
+    provisional_claim_ready = bool(claim_eligible and not provenance_ready)
     debug = {
         "candidate_class": candidate_class,
         "qualification_bucket": rank_bucket,
         "qualification_group_matches": group_matches,
         "direct_core_hits": list(dict.fromkeys(direct_hits)),
+        "exact_phrase_hits": match_type_details["exact_phrase"],
+        "lexical_variant_hits": match_type_details["lexical_variant"],
+        "semantic_related_hits": match_type_details["semantic_related"],
+        "match_types": match_types,
+        "match_type_details": match_type_details,
+        "focus_required": bool(required_groups),
+        "focus_terms": list(plan.get("focus_terms", [])),
+        "focus_hits": list(dict.fromkeys(direct_hits)) if required_groups else [],
+        "focus_missing": bool(required_groups and not direct_hits),
         "historical_or_core_hit_count": len(set(direct_hits)),
         "related_non_equivalent_hits": related_hits,
         "supporting_hits": support_hits,
@@ -191,11 +264,19 @@ def qualify_candidate(result: dict, plan: dict) -> dict:
         "scope_only_match": scope_only_match,
         "provenance_eligible": provenance_eligible,
         "provenance_role": provenance_role,
-        "author_evidence_eligible": evidence_eligible,
+        "semantic_ready": semantic_relevant,
+        "scope_ready": scope_ready,
+        "provenance_ready": provenance_ready,
+        "claim_eligible": claim_eligible,
+        "claim_ready": claim_ready,
+        "provisional_claim_ready": provisional_claim_ready,
+        "author_evidence_eligible": claim_eligible,
     }
     result["_qualification"] = debug
     result.setdefault("_debug", {}).update(debug)
     result["evidence_eligible"] = evidence_eligible
+    result["claim_eligible"] = claim_eligible
+    result["claim_ready"] = claim_ready
     return result
 
 
@@ -243,11 +324,21 @@ def assess_retrieval_adequacy(results: list[dict], plan: dict, *,
     semantic = [result for result in results
                 if result.get("_qualification", {}).get("semantic_relevant")]
     eligible = [result for result in results if result.get("evidence_eligible")]
-    direct = [result for result in eligible
+    claim_eligible = [result for result in results
+                      if result.get("_qualification", {}).get("claim_eligible")]
+    claim_ready = [result for result in results
+                   if result.get("_qualification", {}).get("claim_ready")]
+    direct = [result for result in claim_eligible
               if result.get("_qualification", {}).get("direct_core_hits")]
-    verified_direct = [result for result in direct if result.get("text_layer") == "author_text"]
+    verified_direct = [result for result in direct
+                       if result.get("_qualification", {}).get("claim_ready")]
     target_direct = [result for result in direct
                      if result.get("_qualification", {}).get("target_scope_match")]
+    out_of_scope_direct = [
+        result for result in eligible
+        if result.get("_qualification", {}).get("direct_core_hits")
+        and not result.get("_qualification", {}).get("scope_ready")
+    ]
     citation_ready = [result for result in results if _citation_ready(result, plan)]
     probe_summary = (term_probe or {}).get("summary", {})
     probe_text_hits = sum(
@@ -271,8 +362,15 @@ def assess_retrieval_adequacy(results: list[dict], plan: dict, *,
     citation_status = "ready" if citation_ready else "not_ready"
 
     if direct:
-        status = "adequate" if len(direct) >= 2 else "partial"
-        reason = "direct evidence candidates retrieved"
+        if len(verified_direct) >= 2:
+            status = "adequate"
+            reason = "verified direct evidence candidates retrieved"
+        else:
+            status = "partial"
+            reason = "direct evidence is in scope but source-layer verification remains"
+    elif out_of_scope_direct and plan.get("target_volumes"):
+        status = "retrieval_gap"
+        reason = "direct matches exist only outside the requested work or volume scope"
     elif eligible:
         status = "partial"
         reason = "only structural or provisional evidence candidates retrieved"
@@ -310,6 +408,10 @@ def assess_retrieval_adequacy(results: list[dict], plan: dict, *,
             "semantic": {"status": semantic_status, "candidate_count": len(semantic)},
             "provenance": {"status": provenance_status, "eligible_count": len(eligible)},
             "citation": {"status": citation_status, "ready_count": len(citation_ready)},
+            "scope": {
+                "status": "ready" if claim_eligible else "insufficient",
+                "claim_eligible_count": len(claim_eligible),
+            },
         },
         "plan_status": plan_status,
         "candidate_classes": dict(classes),
@@ -317,8 +419,12 @@ def assess_retrieval_adequacy(results: list[dict], plan: dict, *,
         "semantic_evidence_count": len(semantic),
         "direct_author_text_count": len(direct),
         "verified_direct_count": len(verified_direct),
+        "claim_eligible_count": len(claim_eligible),
+        "claim_ready_count": len(claim_ready),
+        "provisional_claim_count": len(claim_eligible) - len(claim_ready),
         "citation_ready_count": len(citation_ready),
         "target_scope_direct_count": len(target_direct),
+        "out_of_scope_direct_count": len(out_of_scope_direct),
         "term_probe_text_hits": probe_text_hits,
         "register_navigation_hits": len(register_hits or []),
         "strong_claim_warning": quantifier_warning,

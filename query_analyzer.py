@@ -229,22 +229,37 @@ def analyze_query(question: str, expanded_query: str = "",
             "window_chars": 220,
         })
 
-    target_abteilung = None
-    target_band = None
+    # Preserve every work scope.  The compatibility pair below still exposes
+    # the first scope to older callers, while QueryPlan can route each work
+    # independently.
+    target_volumes = []
     for work_name in work_terms:
         abt_band = WORK_VOLUME_MAP.get(work_name)
         if abt_band:
-            target_abteilung, target_band = abt_band
-            break
-    if not target_abteilung:
+            abteilung, band = abt_band
+            candidate = {
+                "label": "/".join(filter(None, [abteilung, band])),
+                "abteilung": abteilung,
+                "band": band,
+            }
+            if candidate not in target_volumes:
+                target_volumes.append(candidate)
+    if not target_volumes:
         for term in matched_terms:
             entry = get_glossary_entry(term, glossary_entries)
             abt_hint = entry.get("abteilung_hint")
             band_hint = entry.get("band_hint")
             if isinstance(abt_hint, str):
-                target_abteilung = abt_hint
-                target_band = str(band_hint) if band_hint is not None else None
+                band = str(band_hint) if band_hint is not None else None
+                target_volumes.append({
+                    "label": "/".join(filter(None, [abt_hint, band])),
+                    "abteilung": abt_hint,
+                    "band": band,
+                })
                 break
+    first_scope = target_volumes[0] if target_volumes else {}
+    target_abteilung = first_scope.get("abteilung")
+    target_band = first_scope.get("band")
 
     return {
         "core_terms": core_terms,
@@ -259,6 +274,7 @@ def analyze_query(question: str, expanded_query: str = "",
         "lexical_core": lexical_core,
         "intent": intent,
         "target_abteilung": target_abteilung,
+        "target_volumes": target_volumes,
         "target_band": target_band,
     }
 

@@ -131,6 +131,44 @@ def main() -> int:
             if by_page.get(page) != layer:
                 failures.append(f"I/2 p.{page}: expected {layer}, got {by_page.get(page)}")
 
+        ii3_source = "ZWEITE BAND 3 TEXT.TEIL 2"
+        ii3_rows = conn.execute(
+            """
+            SELECT id, source_file, source_collection, source_type, mega_abteilung,
+                   band, page, chunk_text, source_title
+            FROM chunks WHERE source_file=? ORDER BY page
+            """,
+            (ii3_source,),
+        ).fetchall()
+        names = [
+            "id", "source_file", "source_collection", "source_type", "mega_abteilung",
+            "band", "page", "chunk_text", "source_title",
+        ]
+        ii3_records = [dict(zip(names, row)) for row in ii3_rows]
+        ii3_decisions = classify_records(ii3_records)
+        target = next(record for record in ii3_records if record["page"] == 18)
+        decision = ii3_decisions[target["id"]]
+        if decision.layer != "editorial_intro":
+            failures.append(
+                f"II/3 part 2 p.18: expected editorial_intro, got {decision.layer}"
+            )
+        ii3_part5_rows = conn.execute(
+            """
+            SELECT id, source_file, source_collection, source_type, mega_abteilung,
+                   band, page, chunk_text, source_title
+            FROM chunks WHERE source_file=? ORDER BY page
+            """,
+            ("ZWEITE BAND 3TEXT.TEIL 5",),
+        ).fetchall()
+        ii3_part5 = [dict(zip(names, row)) for row in ii3_part5_rows]
+        part5_decisions = classify_records(ii3_part5)
+        part5_target = next(record for record in ii3_part5 if record["page"] == 26)
+        part5_decision = part5_decisions[part5_target["id"]]
+        if part5_decision.layer != "editorial_intro":
+            failures.append(
+                "II/3 part 5 p.26: expected editorial_intro, "
+                f"got {part5_decision.layer}"
+            )
         apparat = load_records(conn, "I", "2", "APPARAT", [1, 100])
         for record in apparat:
             decision = classify_records([record])[record["id"]]

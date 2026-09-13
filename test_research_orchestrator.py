@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from research_orchestrator import run_research
+from research_orchestrator import _select_records, run_research
 from research_plan import build_research_plan
 
 
@@ -37,6 +37,15 @@ def _record(record_id: str = "test:shared") -> dict:
         "source_doc": "test",
         "ocr_quality": "high",
         "evidence_eligible": True,
+        "claim_eligible": True,
+        "claim_ready": True,
+        "_qualification": {
+            "claim_eligible": True,
+            "claim_ready": True,
+            "target_scope_match": True,
+            "direct_core_hits": ["Profitrate"],
+            "qualification_bucket": 0,
+        },
         "_retrieval_sources": ["unit_test"],
     }
 
@@ -140,6 +149,29 @@ class ResearchOrchestratorTests(unittest.TestCase):
         )
 
 
+
+    def test_definition_evidence_is_selected_over_tangential_example(self):
+        tangential = _record("test:tangential")
+        tangential["text"] = (
+            "Unterscheidung von produktiver und unproduktiver Arbeit. "
+            "Die Produktivkraft ist vermindert und die Rate des Mehrwerts bleibt gleich."
+        )
+        definition = _record("test:definition")
+        definition["text"] = (
+            "Nur die Arbeit, die Kapital produziert, ist produktive Arbeit. "
+            "Der Gebrauchswert besteht nicht in der konkreten Arbeit, sondern in ihrer Funktion."
+        )
+        subquestion = {
+            "question": "Was ist der Unterschied im Begriff der produktiven Arbeit?",
+            "type": "textual_reconstruction",
+        }
+        selected = _select_records(
+            [tangential, definition], 1, subquestion
+        )
+        self.assertEqual(selected[0]["id"], "test:definition")
+        debug = selected[0]["_debug"]["evidence_selection"]
+        self.assertEqual(debug["cue_family"], "definition_or_distinction")
+        self.assertGreaterEqual(debug["cue_hit_count"], 2)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
