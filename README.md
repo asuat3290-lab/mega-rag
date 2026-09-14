@@ -50,7 +50,7 @@ Copy-Item config.example.yaml config.yaml
 .\.venv\Scripts\python.exe -m unittest test_philology_coverage -v
 ```
 
-测试导入会读取 `config.yaml`，但本测试把数据库操作指向合成临时库；复制示例配置不等于这些示例路径已有数据。不要覆盖已有个人配置。当前仓库为私有，clone 需要访问权限。完整工作台依赖在 [requirements.txt](requirements.txt)，安装与语料处理是单独步骤；不要把合成测试通过理解为真实检索效果已经验证。
+测试导入会读取 `config.yaml`，但本测试把数据库操作指向合成临时库；复制示例配置不等于这些示例路径已有数据。不要覆盖已有个人配置。公开源码可直接 clone。完整工作台依赖在 [requirements.txt](requirements.txt)，安装与语料处理是单独步骤；不要把合成测试通过理解为真实检索效果已经验证。
 
 ## 接入自己的本地索引
 
@@ -83,4 +83,6 @@ MegaRAG 侧重找到材料并说明其检索与来源边界；[research-kb / Max
 
 欢迎优先贡献：小型合法语料的检索评测、历史拼写测试、版本归属修正、可复现安装问题。不要提交受版权限制的整卷原文、私人研究输出、密钥或本地数据库。
 
-目前未声明开源许可证；仓库访问权不等于语料或代码的再分发授权。
+## 许可与使用
+
+项目代码与自有文档采用 [MIT License](LICENSE)，欢迎使用、修改、分发和提交 Pull Request。MEGA² / MEGAdigital 文本、OCR 输入与第三方依赖不因此重新授权；请阅读 [第三方与语料边界](THIRD-PARTY-NOTICES.md)。软件按现状提供，不保证研究结论正确。

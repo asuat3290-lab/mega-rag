@@ -1,7 +1,8 @@
 # Contributing
 
-This is a development snapshot shared in a private repository. No open-source
-license has been declared. Corpus access and code access do not grant redistribution rights.
+This is an open-source development snapshot under the [MIT License](LICENSE).
+Contributions are welcome under the same license. Submit only material you have
+the right to contribute. Corpus access does not grant corpus redistribution rights.
 
 ## Useful first contributions
 
