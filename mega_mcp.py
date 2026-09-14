@@ -23,7 +23,7 @@ try:
 except ImportError as exc:  # pragma: no cover - optional integration dependency
     print(
         "The optional 'mcp' package is not installed. Use mega_agent.py or install "
-        "requirements-mcp.txt into the D: environment.",
+        "requirements-mcp.txt into this project's virtual environment.",
         file=sys.stderr,
     )
     raise SystemExit(2) from exc

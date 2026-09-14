@@ -10,6 +10,10 @@
 
 [研究场景](#一个值得这样检索的问题) · [无语料试验](#先做无语料试验) · [来源目录](docs/source_catalog.md) · [贡献](CONTRIBUTING.md)
 
+**在其他 Windows 电脑安装：**见 [ZIP 安装包说明](docs/windows-install.md)。
+支持独立环境、目标电脑路径配置、UI / CLI / MCP 启动；需要 Python 3.13，语料自备。
+源码用户也可直接运行 `py -3.13 portable_install.py --profile full`。
+
 ## 一个值得这样检索的问题
 
 > 马克思在不同手稿和《资本论》中使用 geistige Produktion，是否是在讨论同一个概念？

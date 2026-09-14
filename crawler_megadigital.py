@@ -35,7 +35,9 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 DELAY = 0.4          # 请求间隔（秒），尊重服务器
 RETRIES = 4
 
-OUT_DIR = Path(r"D:\research-archives\MEGA_V3_论文研究工作台\02_语料库\MEGAdigital网页语料")
+from portable_paths import configured_path
+
+OUT_DIR = configured_path("megadigital_downloads", "data/megadigital")
 PROGRESS = OUT_DIR / ".megadigital_fetch_state.json"
 
 # 书信年份 → MEGA 卷号（官方 mega.bbaw.de 卷次表）

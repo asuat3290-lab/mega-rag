@@ -269,11 +269,12 @@ def import_records(source: Path, metadata_db: Path, dry_run: bool, batch_size: i
 def main() -> int:
     parser = argparse.ArgumentParser(description="Import authoritative MEGAdigital JSONL into MEGA RAG")
     parser.add_argument("--source", required=True, help="Canonical MEGAdigital JSONL file")
-    parser.add_argument("--metadata-db", default="D:/mega_rag/metadata.db")
+    from portable_paths import configured_path
+    parser.add_argument("--metadata-db", default=str(configured_path("metadata_db", "data/metadata.db")))
     parser.add_argument("--dry-run", action="store_true", help="Inspect coverage without modifying the database")
     parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument("--include-unmapped", action="store_true", help="Import records without a recognized MEGA volume id" )
-    parser.add_argument("--manifest", default="D:/mega_rag/megadigital_import_manifest.json")
+    parser.add_argument("--manifest", default=str(configured_path("import_manifest", "data/megadigital_import_manifest.json")))
     parser.add_argument("--skip-source-catalog", action="store_true", help="Skip derived source catalog refresh")
     args = parser.parse_args()
 

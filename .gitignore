@@ -17,6 +17,8 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.portable-install.json
+dist/
 backups/
 corpus/
 data/
@@ -29,4 +31,3 @@ eval_reports/
 *.docx
 *.jsonl
 sql_probe*.py
-

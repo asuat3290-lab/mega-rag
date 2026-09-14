@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """为 megadigital chunks 批量生成 bge-m3 向量并写入 vectors.lancedb。
 
-用法（必须用 mega_rag_venv 且清空 PYTHONPATH）:
-  PYTHONPATH= D:\\Hermes\\mega_rag_venv\\Scripts\\python.exe embed_megadigital.py
+用法（使用本项目安装环境）:
+  .venv/Scripts/python.exe embed_megadigital.py
 """
 from __future__ import annotations
 
@@ -15,9 +15,11 @@ from pathlib import Path
 import lancedb
 from ollama import Client
 
-META_DB = Path(r"D:\mega_rag\metadata.db")
-VEC_DB = Path(r"D:\mega_rag\vectors.lancedb")
-STATE_FILE = Path(r"D:\mega_rag\.embed_megadigital_state.json")
+from portable_paths import configured_path
+
+META_DB = configured_path("metadata_db", "data/metadata.db")
+VEC_DB = configured_path("vector_db", "data/vectors.lancedb")
+STATE_FILE = configured_path("embedding_state", "data/.embed_megadigital_state.json")
 BATCH = 32  # 长文本大 batch 会卡死 Ollama runner；32 稳妥
 MAX_CHARS = 6000  # bge-m3 8192 token 安全上限内
 
